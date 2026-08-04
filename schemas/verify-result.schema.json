@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://winpkg-agent.dev/schema/verify-result.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "planId", "status", "verifiedAt", "items", "rebootRequired"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "planId": { "type": "string", "format": "uuid" },
+    "status": { "enum": ["success", "failed", "indeterminate", "not-run", "deferred", "reboot-required"] },
+    "verifiedAt": { "type": "string", "format": "date-time" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "manager", "id", "status", "reasonCode"],
+        "properties": {
+          "name": { "type": "string" },
+          "manager": { "enum": ["winget", "scoop"] },
+          "id": { "type": "string" },
+          "status": { "enum": ["verified", "verification-failed", "indeterminate", "reboot-pending", "deferred"] },
+          "reasonCode": { "type": "string" },
+          "actualVersion": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "rebootRequired": { "type": "boolean" }
+  }
+}

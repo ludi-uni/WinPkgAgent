@@ -62,7 +62,7 @@ function Invoke-WpaPlan {
     $rebootRequired=@($results|Where-Object {[bool](Get-WpaPropertyValue $_ 'rebootRequired' $false)}).Count -gt 0
     $result=[pscustomobject][ordered]@{schemaVersion=1;planId=$plan.planId;status=$status;startedAt=$started.ToString('o');finishedAt=$finished.ToString('o');operations=@($results);rebootRequired=$rebootRequired;warnings=@('Automatic rollback is not guaranteed.')}
     $verify=[pscustomobject][ordered]@{schemaVersion=1;planId=$plan.planId;status=$(if($rebootRequired){'reboot-required'}elseif(@($verifyItems|Where-Object status -in @('verification-failed','indeterminate')).Count -gt 0){'failed'}elseif($verifyItems.Count -eq 0){'not-run'}else{'success'});verifiedAt=$finished.ToString('o');items=@($verifyItems);rebootRequired=$rebootRequired}
-    Test-WpaDataSchema -Data $result -SchemaName result | Out-Null;Test-WpaDataSchema -Data $verify -SchemaName result | Out-Null
+    Test-WpaDataSchema -Data $result -SchemaName apply-result | Out-Null;Test-WpaDataSchema -Data $verify -SchemaName verify-result | Out-Null
     if($OutputPath -and $PSCmdlet.ShouldProcess($OutputPath,'Write apply result')){Write-WpaAtomicJson $OutputPath $result};if($VerifyOutputPath -and $PSCmdlet.ShouldProcess($VerifyOutputPath,'Write verify result')){Write-WpaAtomicJson $VerifyOutputPath $verify};if($SummaryPath -and $PSCmdlet.ShouldProcess($SummaryPath,'Write run summary')){Write-WpaAtomicText $SummaryPath (ConvertTo-WpaRunSummaryMarkdown $result)}
     return [pscustomobject]@{apply=$result;verify=$verify}
 }
