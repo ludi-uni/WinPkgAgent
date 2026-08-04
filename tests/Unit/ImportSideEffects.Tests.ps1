@@ -28,11 +28,8 @@ Describe 'module import side effects' {
         $before = & $getArtifactSnapshot
 
         try {
-            Import-Module $modulePath -Force
-            InModuleScope WinPkgAgent {
-                Mock Invoke-WpaProcess { throw 'Import side-effect process call' }
-                Mock Resolve-WpaManagerExecutable { throw 'Import side-effect resolver call' }
-            }
+            Mock Invoke-WpaProcess { throw 'Import side-effect process call' } -ModuleName WinPkgAgent
+            Mock Resolve-WpaManagerExecutable { throw 'Import side-effect resolver call' } -ModuleName WinPkgAgent
             Import-Module $modulePath -Force
             Should -Invoke Invoke-WpaProcess -Times 0 -Exactly
             Should -Invoke Resolve-WpaManagerExecutable -Times 0 -Exactly
