@@ -31,6 +31,18 @@ Describe 'manager fingerprints' {
             $path=Join-Path $TestDrive 'acl.exe';[IO.File]::WriteAllText($path,'manager');Mock Get-Acl { throw 'unavailable' }
             (Get-WpaManagerFingerprint scoop ([IO.Path]::GetFullPath($path))).aclAssessment | Should -Be 'unknown'
         }
+
+        It 'marks a protected manager location trusted only after a conservative ACL check' {
+            $path=Join-Path $TestDrive 'winget.exe';[IO.File]::WriteAllText($path,'manager')
+            Mock Get-Acl { [pscustomobject]@{Owner='NT SERVICE\TrustedInstaller';Access=@()} }
+            (Get-WpaManagerFingerprint winget ([IO.Path]::GetFullPath($path))).aclAssessment | Should -Be 'trusted;acl-checked'
+        }
+
+        It 'keeps a broadly writable manager location untrusted' {
+            $path=Join-Path $TestDrive 'winget.exe';[IO.File]::WriteAllText($path,'manager')
+            Mock Get-Acl { [pscustomobject]@{Owner='NT SERVICE\TrustedInstaller';Access=@([pscustomobject]@{AccessControlType='Allow';IdentityReference='BUILTIN\Users';FileSystemRights='Modify'})} }
+            (Get-WpaManagerFingerprint winget ([IO.Path]::GetFullPath($path))).aclAssessment | Should -Be 'unknown'
+        }
         It 'accepts a simple Scoop forwarding shim but marks complex syntax unavailable' {
             $target=Join-Path $TestDrive 'scoop.ps1';[IO.File]::WriteAllText($target,'target')
             $shim=Join-Path $TestDrive 'scoop.cmd';[IO.File]::WriteAllText($shim,'"'+([IO.Path]::GetFullPath($target))+'" %*')

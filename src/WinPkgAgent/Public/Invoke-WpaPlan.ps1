@@ -31,13 +31,15 @@ function Invoke-WpaPlan {
     }
     $results=[System.Collections.Generic.List[object]]::new();$failed=$false
     $journalPath=if($OutputPath){[IO.Path]::ChangeExtension($OutputPath,'.journal.json')}else{$null}
+    if($journalPath -and (Test-Path -LiteralPath $journalPath)){throw 'An existing journal was found; inspect it before starting another apply.'}
+    $journalSequence=0
     $journal=[pscustomobject][ordered]@{schemaVersion=1;planId=$plan.planId;startedAt=$started.ToString('o');updatedAt=$started.ToString('o');entries=@()}
     foreach($operation in $operations){
         if($failed){$empty=Get-WpaOutputMetadata $null;$results.Add([pscustomobject]@{manager=$operation.manager;id=$operation.id;operation=$operation.operation;status='not-run';reasonCode='STOPPED_AFTER_FAILURE';exitCode=$null;durationMs=0;timedOut=$false;rebootRequired=$false;stdoutHash=$empty.hash;stderrHash=$empty.hash;stdoutLength=0;stderrLength=0;stdoutTruncated=$false;stderrTruncated=$false;failureSummary='Stopped after a previous failure.';diagnosticLoggingEnabled=[bool]$DiagnosticLogging});continue}
         if(-not $PSCmdlet.ShouldProcess("$($operation.manager)/$($operation.id)",$operation.operation)){$empty=Get-WpaOutputMetadata $null;$results.Add([pscustomobject]@{manager=$operation.manager;id=$operation.id;operation=$operation.operation;status='what-if';reasonCode='SHOULD_PROCESS_DECLINED';exitCode=$null;durationMs=0;timedOut=$false;rebootRequired=$false;stdoutHash=$empty.hash;stderrHash=$empty.hash;stdoutLength=0;stderrLength=0;stdoutTruncated=$false;stderrTruncated=$false;failureSummary=$null;diagnosticLoggingEnabled=[bool]$DiagnosticLogging});continue}
         $phase='journal-before';$external=$null
         try {
-            if($journalPath){$journal.entries=@($journal.entries)+@([pscustomobject]@{manager=$operation.manager;id=$operation.id;operation=$operation.operation;status='starting';recordedAt=[datetimeoffset]::UtcNow.ToString('o')});$journal.updatedAt=[datetimeoffset]::UtcNow.ToString('o');Write-WpaAtomicJson $journalPath $journal}
+            if($journalPath){$journalSequence++;$fingerprint=@($plan.managerFingerprints|Where-Object manager -eq $operation.manager|Select-Object -First 1).fingerprint;$journal.entries=@($journal.entries)+@([pscustomobject]@{sequence=$journalSequence;operationId=(Get-WpaSha256 -Text ("$($operation.manager)/$($operation.id)/$($operation.operation)"));operationHash=(Get-WpaObjectHash $operation);planHash=$plan.planHash;manager=$operation.manager;id=$operation.id;operation=$operation.operation;managerFingerprintHash=$(if($fingerprint){Get-WpaObjectHash $fingerprint}else{$null});status='starting';recordedAt=[datetimeoffset]::UtcNow.ToString('o')});$journal.updatedAt=[datetimeoffset]::UtcNow.ToString('o');Write-WpaAtomicJson $journalPath $journal}
             $phase='adapter'
             $external=Invoke-WpaManagerAction -Action $operation -TimeoutSeconds ([int]$policy.operationTimeoutSeconds)
             $reboot=([int64](Get-WpaPropertyValue $external 'ExitCode' -1) -eq 3010) -or [bool](Get-WpaPropertyValue $external 'RebootRequired' $false)
@@ -47,7 +49,7 @@ function Invoke-WpaPlan {
             if($DiagnosticLogging){$diagnostic=ConvertTo-WpaDiagnosticText $external.StdOut $external.StdErr;$operationResult.diagnostic=[pscustomobject][ordered]@{text=$diagnostic.text;truncated=$diagnostic.truncated;warning='Secret removal is not complete.'}}
             $operationResult=[pscustomobject]$operationResult
             $phase='journal-after'
-            if($journalPath){$journal.entries=@($journal.entries)+@([pscustomobject]@{manager=$operation.manager;id=$operation.id;operation=$operation.operation;status=$operationResult.status;reasonCode=$operationResult.reasonCode;recordedAt=[datetimeoffset]::UtcNow.ToString('o')});$journal.updatedAt=[datetimeoffset]::UtcNow.ToString('o');Write-WpaAtomicJson $journalPath $journal}
+            if($journalPath){$journalSequence++;$fingerprint=@($plan.managerFingerprints|Where-Object manager -eq $operation.manager|Select-Object -First 1).fingerprint;$journal.entries=@($journal.entries)+@([pscustomobject]@{sequence=$journalSequence;operationId=(Get-WpaSha256 -Text ("$($operation.manager)/$($operation.id)/$($operation.operation)"));operationHash=(Get-WpaObjectHash $operation);planHash=$plan.planHash;manager=$operation.manager;id=$operation.id;operation=$operation.operation;managerFingerprintHash=$(if($fingerprint){Get-WpaObjectHash $fingerprint}else{$null});status=$operationResult.status;reasonCode=$operationResult.reasonCode;recordedAt=[datetimeoffset]::UtcNow.ToString('o')});$journal.updatedAt=[datetimeoffset]::UtcNow.ToString('o');Write-WpaAtomicJson $journalPath $journal}
             $results.Add($operationResult)
             if(-not $ok){$failed=$true}
         }catch{

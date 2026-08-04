@@ -46,7 +46,16 @@ function Get-WpaManagerFingerprint {
     }
     $aclAssessment='unknown'
     try {
-        $null = Get-Acl -LiteralPath $fullPath -ErrorAction Stop
+        $acl = Get-Acl -LiteralPath $fullPath -ErrorAction Stop
+        $owner=[string]$acl.Owner
+        $protectedOwner=$owner -match '^(NT SERVICE\\TrustedInstaller|NT AUTHORITY\\SYSTEM|BUILTIN\\Administrators)$'
+        $broadWrite=$false
+        foreach($rule in @($acl.Access)){
+            $identity=[string]$rule.IdentityReference
+            $rights=[string]$rule.FileSystemRights
+            if($rule.AccessControlType -eq 'Allow' -and $identity -match '(?i)(^|\\)(Everyone|Users|Authenticated Users)$' -and $rights -match '(?i)(Write|Modify|FullControl|Delete)'){$broadWrite=$true;break}
+        }
+        if($protectedOwner -and -not $broadWrite){$aclAssessment='trusted;acl-checked'}
     } catch {
         $aclAssessment='unknown'
     }

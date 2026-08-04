@@ -16,7 +16,7 @@
         'Show-WpaPlan',
         'Approve-WpaPlan',
         'Test-WpaPlan',
-        'Invoke-WpaPlan'
+        'Invoke-WpaPlan','New-WpaRun','Get-WpaRun','Show-WpaRun','Approve-WpaRun','Invoke-WpaRun','Resume-WpaVerification','Initialize-WpaProject','Export-WpaManifestCandidate'
     )
     CmdletsToExport = @()
     VariablesToExport = @()
