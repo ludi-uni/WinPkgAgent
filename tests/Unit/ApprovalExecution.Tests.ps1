@@ -48,6 +48,18 @@ Describe 'WinPkgAgent plan approval and execution gates' {
             { Assert-WpaPlanActionSet -Actions @($scoopUpgrade) } | Should -Throw '*Scoop upgrades*'
         }
 
+        It 'exposes separate approval-required Apply and approval-free Preflight parameter sets' {
+            $command = Get-Command Invoke-WpaPlan
+            $command.ParameterSets.Name | Should -Contain 'Apply'
+            $command.ParameterSets.Name | Should -Contain 'Preflight'
+            $command.ParameterSets['Apply'].Parameters.Name | Should -Contain 'ApprovalPath'
+            $command.ParameterSets['Preflight'].Parameters.Name | Should -Not -Contain 'ApprovalPath'
+        }
+
+        It 'does not allow normal Apply without an approval path' {
+            { Invoke-WpaPlan -PlanPath plan.json -PolicyPath policy.yaml -OutputPath $null -VerifyOutputPath $null -SummaryPath $null } | Should -Throw
+        }
+
         It 'rejects a changed manager fingerprint before mutation' {
             $fingerprint=[pscustomobject]@{manager='scoop';pathHash=('a'*64);fileSha256=('b'*64);fileVersion=$null;lastWriteTimeUtc='2026-01-01T00:00:00Z';fileLength=1;isReparsePoint=$false;signatureStatus='not-applicable';signerSubject=$null;aclAssessment='trusted'}
             $inventory.managers[0].fingerprint=$fingerprint;$plan.inventoryHash=Get-WpaInventoryStateHash $inventory;$plan.managerFingerprints=@([pscustomobject]@{manager='scoop';fingerprint=$fingerprint});$plan.contentHash=Get-WpaObjectHash (Get-WpaPlanContent $plan);$plan.planHash=Get-WpaObjectHash (Get-WpaPlanHashInput $plan);$approval.planHash=$plan.planHash

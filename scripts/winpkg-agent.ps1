@@ -17,7 +17,7 @@ try {
         show { Show-WpaPlan -PlanPath $PlanPath }
         approve { Approve-WpaPlan -PlanPath $PlanPath -OutputPath $OutputPath -WhatIf:$WhatIf }
         'validate-plan' { Test-WpaPlan -PlanPath $PlanPath -ApprovalPath $ApprovalPath }
-        invoke { if(-not $OutputPath){$OutputPath='./artifacts/apply-result.json'};if(-not $VerifyOutputPath){$VerifyOutputPath='./artifacts/verify-result.json'};if(-not $SummaryPath){$SummaryPath='./artifacts/run-summary.md'};Invoke-WpaPlan -PlanPath $PlanPath -ApprovalPath $ApprovalPath -PolicyPath $PolicyPath -OutputPath $OutputPath -VerifyOutputPath $VerifyOutputPath -SummaryPath $SummaryPath -WhatIf:$WhatIf -Confirm:$false }
+        invoke { if(-not $OutputPath){$OutputPath='./artifacts/apply-result.json'};if(-not $VerifyOutputPath){$VerifyOutputPath='./artifacts/verify-result.json'};if(-not $SummaryPath){$SummaryPath='./artifacts/run-summary.md'};if($WhatIf){Invoke-WpaPlan -PlanPath $PlanPath -PolicyPath $PolicyPath -Preflight -OutputPath $OutputPath -VerifyOutputPath $VerifyOutputPath -SummaryPath $SummaryPath -Confirm:$false}else{Invoke-WpaPlan -PlanPath $PlanPath -ApprovalPath $ApprovalPath -PolicyPath $PolicyPath -OutputPath $OutputPath -VerifyOutputPath $VerifyOutputPath -SummaryPath $SummaryPath -Confirm:$false} }
     }
     $result
     exit (Get-WpaCliExitCode -Command $Command -Result $result)
