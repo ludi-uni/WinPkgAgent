@@ -5,6 +5,13 @@ function Invoke-WpaProcess {
         [string[]]$Arguments = @(),
         [ValidateRange(1,3600)][int]$TimeoutSeconds = 30
     )
+    if ([string]::IsNullOrWhiteSpace($FilePath)) {
+        throw [System.ArgumentException]::new('FilePath is required.')
+    }
+    if (-not [IO.Path]::IsPathFullyQualified($FilePath)) {
+        throw [System.ArgumentException]::new('FilePath must be a fully-qualified path.')
+    }
+
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = $FilePath
     $psi.UseShellExecute = $false
