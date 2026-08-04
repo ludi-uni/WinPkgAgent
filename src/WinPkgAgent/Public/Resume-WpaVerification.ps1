@@ -4,6 +4,7 @@ function Resume-WpaVerification {
     $plan=Read-WpaJsonFile $PlanPath;Test-WpaDataSchema $plan plan|Out-Null
     $apply=Read-WpaJsonFile $ApplyResultPath;Test-WpaDataSchema $apply apply-result|Out-Null
     if($plan.planId -ne $apply.planId){throw 'Plan and apply result do not belong to the same run.'}
+    if(-not [bool]$apply.rebootRequired -and @($apply.operations|Where-Object reasonCode -eq 'REBOOT_REQUIRED').Count -eq 0){throw 'Apply result does not require resumed verification.'}
     $inventory=Get-WpaInventory;$items=@()
     foreach($result in @($apply.operations|Where-Object status -eq completed)){
         $action=@($plan.actions|Where-Object {$_.manager -eq $result.manager -and $_.id -eq $result.id}|Select-Object -First 1)
