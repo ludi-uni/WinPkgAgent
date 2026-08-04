@@ -70,7 +70,7 @@ function Get-WpaInventoryStateHash {
     param([Parameter(Mandatory)][object]$Inventory)
 
     $managers = @($Inventory.managers | ForEach-Object {
-        [ordered]@{ manager = $_.manager; status = $_.status; version = $_.version }
+        [ordered]@{ manager = $_.manager; status = $_.status; version = $_.version; fingerprint = (Get-WpaPropertyValue $_ 'fingerprint') }
     } | Sort-Object manager)
     $packages = @($Inventory.packages | ForEach-Object {
         [ordered]@{

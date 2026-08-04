@@ -48,14 +48,16 @@ If `Test-WpaEnvironment` reports `managers.scoop: false`, install Scoop manually
 
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-irm get.scoop.sh | iex
+Invoke-WebRequest https://get.scoop.sh -OutFile ./install-scoop.ps1
+Get-Content ./install-scoop.ps1
+./install-scoop.ps1
 scoop --version
 Get-Command scoop
 ```
 
 Manager discovery is not limited to the inherited `PATH`. For non-interactive hosts such as Codex, winpkg-agent also checks the current user's standard Scoop shim and Windows App execution alias. The resolved executable is used consistently for inventory and package operations, while the path is kept in memory and is not written to artifacts. Custom installations must still be exposed through the process `PATH`; winpkg-agent does not persistently modify `PATH` or install a manager.
 
-When the module is imported, it prepends the directories of any detected managers to the current process `PATH`. This makes the same resolved PATH available to later commands and child manager processes in that PowerShell process:
+When the module is imported, it does not modify the current process `PATH`, start managers, write files, or install dependencies. Each manager operation uses its resolved absolute executable path directly:
 
 ```powershell
 Import-Module ./src/WinPkgAgent/WinPkgAgent.psd1 -Force
@@ -78,8 +80,7 @@ New-WpaPlan -ManifestPath ./config/packages.example.yaml `
 Show-WpaPlan -PlanPath ./artifacts/plan.json
 # A human reviews and runs Approve-WpaPlan interactively.
 Invoke-WpaPlan -PlanPath ./artifacts/plan.json `
-  -ApprovalPath ./artifacts/plan.approval.json `
-  -PolicyPath ./config/policy.default.yaml -WhatIf
+  -PolicyPath ./config/policy.default.yaml -Preflight
 ```
 
 Example plan row:

@@ -10,4 +10,6 @@ Plans contain immutable inputs/actions and separately generated metadata. `conte
 
 Verification reacquires inventory through the same adapter boundary and records uncertainty; it does not claim rollback.
 
+Run workspaces are a thin orchestration layer around these commands. They fix artifact names relative to one run directory, reject traversal and reparse points, and refuse a new apply when a journal already exists. `Resume-WpaVerification` is an explicit, user-invoked read-only continuation after reboot-required apply.
+
 Apply writes an atomic `apply-result.journal.json` snapshot immediately before and after each attempted mutation so a process interruption does not erase the operation boundary.

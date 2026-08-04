@@ -1,0 +1,12 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://winpkg-agent.dev/schema/run.json",
+  "type":"object","additionalProperties":false,
+  "required":["schemaVersion","runId","createdAt","manifestHash","policyHash","manifestPath","policyPath","inventoryPath","planPath","approvalPath","applyResultPath","verifyResultPath","journalPath","summaryPath","currentStage"],
+  "properties":{
+    "schemaVersion":{"const":1},"runId":{"type":"string","pattern":"^[0-9]{8}-[0-9]{6}-[0-9a-f]{8}$"},"createdAt":{"type":"string","format":"date-time"},
+    "manifestHash":{"type":"string","minLength":64,"maxLength":64},"policyHash":{"type":"string","minLength":64,"maxLength":64},
+    "manifestPath":{"const":"manifest.yaml"},"policyPath":{"const":"policy.yaml"},"inventoryPath":{"const":"inventory.json"},"planPath":{"const":"plan.json"},"approvalPath":{"const":"approval.json"},"applyResultPath":{"const":"apply-result.json"},"verifyResultPath":{"const":"verify-result.json"},"journalPath":{"const":"journal.json"},"summaryPath":{"const":"summary.md"},
+    "currentStage":{"enum":["created","planned","preflighted","approved","applying","applied","verification-deferred","verified","failed"]}
+  }
+}

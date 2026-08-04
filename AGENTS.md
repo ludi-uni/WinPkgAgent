@@ -11,3 +11,5 @@
 - **AI agents may inspect, explain, and prepare changes, but may not approve plans or bypass the interactive typed-digest approval step.** Approval is a human-only action.
 - Do not use force/bypass switches, approval environment variables, or co-located approval artifacts.
 - Preserve unrelated changes and document limitations rather than claiming unsupported behavior.
+- Run workspace commands must keep all artifacts inside the run directory and reject traversal and reparse points.
+- Manager ACL trust is conservative; unknown ACL state remains blocked rather than being silently trusted.

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://winpkg-agent.dev/schema/apply-result.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "planId", "status", "startedAt", "finishedAt", "operations", "rebootRequired", "warnings"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "planId": { "type": "string", "format": "uuid" },
+    "status": { "enum": ["success", "partial-failure", "what-if", "failed"] },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "finishedAt": { "type": "string", "format": "date-time" },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "manager",
+          "id",
+          "operation",
+          "status",
+          "reasonCode",
+          "exitCode",
+          "durationMs",
+          "timedOut",
+          "rebootRequired",
+          "stdoutHash",
+          "stderrHash",
+          "stdoutLength",
+          "stderrLength",
+          "stdoutTruncated",
+          "stderrTruncated",
+          "diagnosticLoggingEnabled"
+        ],
+        "properties": {
+          "manager": { "enum": ["winget", "scoop"] },
+          "id": { "type": "string" },
+          "operation": { "enum": ["install", "upgrade"] },
+          "status": { "enum": ["completed", "failed", "not-run", "what-if"] },
+          "reasonCode": { "type": "string" },
+          "exitCode": { "type": ["integer", "null"] },
+          "durationMs": { "type": "integer", "minimum": 0 },
+          "timedOut": { "type": "boolean" },
+          "rebootRequired": { "type": "boolean" },
+          "stdoutHash": { "type": "string", "minLength": 64, "maxLength": 64 },
+          "stderrHash": { "type": "string", "minLength": 64, "maxLength": 64 },
+          "stdoutLength": { "type": "integer", "minimum": 0 },
+          "stderrLength": { "type": "integer", "minimum": 0 },
+          "stdoutTruncated": { "type": "boolean" },
+          "stderrTruncated": { "type": "boolean" },
+          "failureSummary": { "type": ["string", "null"] },
+          "diagnosticLoggingEnabled": { "type": "boolean" },
+          "redactedSummary": { "type": "string" },
+          "diagnostic": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text", "truncated"],
+            "properties": {
+              "text": { "type": "string" },
+              "truncated": { "type": "boolean" },
+              "warning": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "rebootRequired": { "type": "boolean" },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  }
+}

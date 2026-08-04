@@ -47,5 +47,34 @@ Describe 'WinPkgAgent plan approval and execution gates' {
             $scoopUpgrade=[pscustomobject]@{name='tool';manager='scoop';id='tool';source='main';classification='upgrade';operation='upgrade';reasonCode='PATCH_UPGRADE_AVAILABLE';reason='update';risk='medium';targetVersion='1.0.1';verification=$null}
             { Assert-WpaPlanActionSet -Actions @($scoopUpgrade) } | Should -Throw '*Scoop upgrades*'
         }
+
+        It 'exposes separate approval-required Apply and approval-free Preflight parameter sets' {
+            $command = Get-Command Invoke-WpaPlan
+            $command.ParameterSets.Name | Should -Contain 'Apply'
+            $command.ParameterSets.Name | Should -Contain 'Preflight'
+            $command.ParameterSets['Apply'].Parameters.Name | Should -Contain 'ApprovalPath'
+            $command.ParameterSets['Preflight'].Parameters.Name | Should -Not -Contain 'ApprovalPath'
+        }
+
+        It 'does not allow normal Apply without an approval path' {
+            { Invoke-WpaPlan -PlanPath plan.json -PolicyPath policy.yaml -OutputPath $null -VerifyOutputPath $null -SummaryPath $null } | Should -Throw
+        }
+
+        It 'rejects a changed manager fingerprint before mutation' {
+            $fingerprint=[pscustomobject]@{manager='scoop';pathHash=('a'*64);fileSha256=('b'*64);fileVersion=$null;lastWriteTimeUtc='2026-01-01T00:00:00Z';fileLength=1;isReparsePoint=$false;signatureStatus='not-applicable';signerSubject=$null;aclAssessment='trusted'}
+            $inventory.managers[0].fingerprint=$fingerprint;$plan.inventoryHash=Get-WpaInventoryStateHash $inventory;$plan.managerFingerprints=@([pscustomobject]@{manager='scoop';fingerprint=$fingerprint});$plan.contentHash=Get-WpaObjectHash (Get-WpaPlanContent $plan);$plan.planHash=Get-WpaObjectHash (Get-WpaPlanHashInput $plan);$approval.planHash=$plan.planHash
+            $changed=$fingerprint.PSObject.Copy();$changed.fileSha256=('c'*64)
+            Mock Get-WpaInventory {$inventory.PSObject.Copy()};$inventory.managers[0].fingerprint=$changed;Mock Invoke-WpaManagerAction {throw 'must not run'}
+            { Invoke-WpaPlan -PlanPath plan.json -ApprovalPath approval.json -PolicyPath policy.yaml -OutputPath $null -VerifyOutputPath $null -SummaryPath $null -Confirm:$false } | Should -Throw '*MANAGER_EXECUTABLE_CHANGED*'
+            Should -Invoke Invoke-WpaManagerAction -Times 0 -Exactly
+        }
+
+        It 'keeps unavailable fingerprints distinct from invalid signatures' {
+            $fingerprint=[pscustomobject]@{manager='scoop';pathHash=('a'*64);fileSha256=('b'*64);fileVersion=$null;lastWriteTimeUtc='2026-01-01T00:00:00Z';fileLength=1;isReparsePoint=$false;signatureStatus='not-applicable';signerSubject=$null;aclAssessment='trusted'}
+            $inventory.managers[0].fingerprint=$fingerprint;$plan.inventoryHash=Get-WpaInventoryStateHash $inventory;$plan.managerFingerprints=@([pscustomobject]@{manager='scoop';fingerprint=$fingerprint});$plan.contentHash=Get-WpaObjectHash (Get-WpaPlanContent $plan);$plan.planHash=Get-WpaObjectHash (Get-WpaPlanHashInput $plan);$approval.planHash=$plan.planHash
+            $inventory.managers[0].fingerprint=$null;Mock Get-WpaInventory {$inventory.PSObject.Copy()};Mock Invoke-WpaManagerAction {throw 'must not run'}
+            { Invoke-WpaPlan -PlanPath plan.json -ApprovalPath approval.json -PolicyPath policy.yaml -OutputPath $null -VerifyOutputPath $null -SummaryPath $null -Confirm:$false } | Should -Throw '*MANAGER_FINGERPRINT_UNAVAILABLE*'
+            Should -Invoke Invoke-WpaManagerAction -Times 0 -Exactly
+        }
     }
 }
