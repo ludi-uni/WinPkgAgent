@@ -55,6 +55,13 @@ Get-Command scoop
 
 Manager discovery is not limited to the inherited `PATH`. For non-interactive hosts such as Codex, winpkg-agent also checks the current user's standard Scoop shim and Windows App execution alias. The resolved executable is used consistently for inventory and package operations, while the path is kept in memory and is not written to artifacts. Custom installations must still be exposed through the process `PATH`; winpkg-agent does not persistently modify `PATH` or install a manager.
 
+When the module is imported, it prepends the directories of any detected managers to the current process `PATH`. This makes the same resolved PATH available to later commands and child manager processes in that PowerShell process:
+
+```powershell
+Import-Module ./src/WinPkgAgent/WinPkgAgent.psd1 -Force
+Test-WpaEnvironment
+```
+
 Typical plan actions are `no-op`, `install`, `upgrade`, `blocked`, `unmanaged`, or `unknown`, each with a reason code. For command failures and partial inventory, see [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Quick start

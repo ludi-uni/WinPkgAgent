@@ -10,6 +10,9 @@ if (Test-Path -LiteralPath $privateRoot) {
         ForEach-Object { . $_.FullName }
 }
 
+# Resolve user-level manager locations before public commands and child processes run.
+$null = Initialize-WpaManagerPath
+
 if (Test-Path -LiteralPath $publicRoot) {
     Get-ChildItem -LiteralPath $publicRoot -Filter '*.ps1' -File |
         Sort-Object FullName |

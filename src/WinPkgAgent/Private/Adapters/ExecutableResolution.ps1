@@ -22,3 +22,22 @@ function Resolve-WpaManagerExecutable {
     }
     return $null
 }
+
+function Initialize-WpaManagerPath {
+    [CmdletBinding()]
+    param()
+
+    $current = @($env:Path -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $prepend = [System.Collections.Generic.List[string]]::new()
+    foreach($manager in @('winget','scoop')) {
+        $executable = Resolve-WpaManagerExecutable -Manager $manager
+        if(-not $executable) { continue }
+        $directory = Split-Path -LiteralPath $executable -Parent
+        if([string]::IsNullOrWhiteSpace($directory)) { continue }
+        if(-not ($current -contains $directory) -and -not ($prepend -contains $directory)) {
+            $prepend.Add($directory)
+        }
+    }
+    if($prepend.Count -gt 0) { $env:Path = ($prepend.ToArray() + $current) -join ';' }
+    return @($prepend)
+}

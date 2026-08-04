@@ -26,6 +26,8 @@ Get-AppxPackage -Name Microsoft.DesktopAppInstaller | Select-Object Name, Versio
 
 The resolved manager path is used consistently for inventory, install, and upgrade, but is kept in memory and is not written to inventory, plan, or result artifacts.
 
+Importing the module also prepends detected manager directories to the current process `PATH`. This is intentionally process-local: it is inherited by later commands and child manager processes, but it does not change the user's or machine's persistent environment.
+
 ## Approval file is missing
 
 `Invoke-WpaPlan` requires a separate approval artifact even with `-WhatIf`. Review the plan and create it interactively as a human:

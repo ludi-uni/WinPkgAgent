@@ -30,6 +30,25 @@ Describe 'manager contract parsers' {
         }
     }
 
+    It 'prepends detected manager directories to the current process PATH' {
+        InModuleScope WinPkgAgent {
+            $oldPath = $env:Path
+            try {
+                $env:Path = 'C:\Windows\System32'
+                Mock Resolve-WpaManagerExecutable {
+                    param($Manager)
+                    if($Manager -eq 'scoop'){'C:\Users\test\scoop\shims\scoop.cmd'}
+                    else {'C:\Program Files\WinGet\winget.exe'}
+                }
+                Initialize-WpaManagerPath
+                ($env:Path -split ';')[0] | Should -Be 'C:\Program Files\WinGet'
+                ($env:Path -split ';')[1] | Should -Be 'C:\Users\test\scoop\shims'
+            } finally {
+                $env:Path = $oldPath
+            }
+        }
+    }
+
     It 'parses winget export and rejects malformed data' {
         InModuleScope WinPkgAgent { $x=ConvertFrom-WpaWingetExport '{"Sources":[{"Packages":[{"PackageIdentifier":"Contoso.App","Version":"1.2.3"}]}]}'; $x[0].Id | Should -Be 'Contoso.App'; (ConvertFrom-WpaWingetExport '{bad') | Should -BeNullOrEmpty }
     }
