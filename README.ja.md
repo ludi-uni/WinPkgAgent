@@ -40,7 +40,7 @@ Get-Command scoop
 
 マネージャーの検出は、継承した `PATH` だけに依存しません。Codex などの非対話環境では、現在ユーザーの Scoop shim と Windows App 実行エイリアスも確認します。検出した実行ファイルは inventory とパッケージ操作で共通して使用しますが、実体パスはメモリ上だけで扱い、artifact には保存しません。カスタム配置を使う場合はコマンド開始前のプロセス `PATH` に追加してください。ツールは PATH を永続変更したり、マネージャーを自動導入したりしません。
 
-モジュールを import すると、検出できたマネージャーの実体ディレクトリを現在の PowerShell プロセスの `PATH` 先頭へ反映します。同じプロセスの後続コマンドと子プロセスは、その PATH を継承します。
+モジュールを import しても、現在の PowerShell プロセスの `PATH`、ファイル、設定は変更しません。manager 操作では解決済みの絶対パスを直接使用します。
 
 ```powershell
 Import-Module ./src/WinPkgAgent/WinPkgAgent.psd1 -Force
@@ -55,7 +55,7 @@ Get-WpaInventory -OutputPath ./artifacts/inventory.json
 New-WpaPlan -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/policy.default.yaml -InventoryPath ./artifacts/inventory.json -OutputPath ./artifacts/plan.json -MarkdownPath ./artifacts/plan.md
 Show-WpaPlan -PlanPath ./artifacts/plan.json
 # ここで人間が計画を確認し、対話端末で Approve-WpaPlan を実行します。
-Invoke-WpaPlan -PlanPath ./artifacts/plan.json -ApprovalPath ./artifacts/plan.approval.json -PolicyPath ./config/policy.default.yaml -WhatIf
+Invoke-WpaPlan -PlanPath ./artifacts/plan.json -PolicyPath ./config/policy.default.yaml -Preflight
 ```
 
 `-WhatIf`では変更アダプターを呼びません。承認は計画ダイジェストへの明示的同意であり、本人認証やロールバック保証ではありません。
