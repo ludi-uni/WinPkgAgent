@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://winpkg-agent.dev/schema/inventory.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "environment", "collectedAt", "status", "managers", "packages", "warnings"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "environment": { "type": "object", "additionalProperties": false, "required": ["id"], "properties": { "id": { "type": ["string", "null"] } } },
+    "collectedAt": { "type": "string", "format": "date-time" },
+    "status": { "enum": ["success", "partial", "failed"] },
+    "managers": { "type": "array", "items": { "$ref": "#/$defs/manager" } },
+    "packages": { "type": "array", "items": { "$ref": "#/$defs/package" } },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "manager": { "type": "object", "additionalProperties": false, "required": ["manager", "version", "status", "timedOut", "warning"], "properties": { "manager": { "enum": ["winget", "scoop"] }, "version": { "type": ["string", "null"] }, "status": { "enum": ["success", "partial", "failed"] }, "timedOut": { "type": "boolean" }, "warning": { "type": ["string", "null"] } } },
+    "package": { "type": "object", "additionalProperties": false, "required": ["manager", "id", "displayName", "installedVersion", "availableVersion", "source", "scope", "metadata"], "properties": { "manager": { "enum": ["winget", "scoop"] }, "id": { "type": "string", "minLength": 1 }, "displayName": { "type": "string", "minLength": 1 }, "installedVersion": { "type": ["string", "null"] }, "availableVersion": { "type": ["string", "null"] }, "source": { "type": ["string", "null"] }, "scope": { "type": ["string", "null"] }, "metadata": { "type": ["object", "null"] } } }
+  }
+}

@@ -1,0 +1,2 @@
+Name Version
+Contoso.App 1.2.3

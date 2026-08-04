@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install pinned development dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module powershell-yaml -RequiredVersion 0.4.12 -Scope CurrentUser -Force
+          Install-Module Pester -RequiredVersion 5.6.1 -Scope CurrentUser -Force -AllowClobber
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force
+
+      - name: Validate schemas and samples
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $schemas = Get-ChildItem schemas -Filter '*.schema.json' -File -ErrorAction SilentlyContinue
+          foreach ($schema in $schemas) {
+            $document = Get-Content $schema.FullName -Raw | ConvertFrom-Json
+            if (-not $document.'$schema' -or (-not $document.type -and -not $document.oneOf)) { throw "Invalid JSON Schema envelope: $($schema.Name)" }
+          }
+          Write-Host "Validated $($schemas.Count) schema files"
+
+      - name: Import module
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module ./src/WinPkgAgent/WinPkgAgent.psd1 -Force
+          $samples = @('./config/packages.example.yaml') + @(Get-ChildItem ./profiles -Filter '*.example.yaml' -File | ForEach-Object FullName)
+          foreach ($sample in $samples) {
+            $check = Test-WpaManifest -Path $sample
+            if (-not $check.valid) { throw "$sample`: $($check.errors -join '; ')" }
+          }
+
+      - name: Analyze PowerShell
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $findings = @(
+            Invoke-ScriptAnalyzer -Path ./src -Settings ./PSScriptAnalyzerSettings.psd1 -Recurse
+            Invoke-ScriptAnalyzer -Path ./scripts -Settings ./PSScriptAnalyzerSettings.psd1 -Recurse
+          )
+          if ($findings.Count -gt 0) {
+            $findings | Format-Table -AutoSize | Out-String | Write-Host
+            throw "PSScriptAnalyzer found $($findings.Count) finding(s)"
+          }
+
+      - name: Run Pester with JUnit and coverage
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $config = New-PesterConfiguration
+          $config.Run.Path = './tests'
+          $config.Run.Exit = $true
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputPath = './TestResults/pester.xml'
+          $config.TestResult.OutputFormat = 'JUnitXml'
+          $config.CodeCoverage.Enabled = $true
+          $config.CodeCoverage.Path = './src/WinPkgAgent/**/*.ps1'
+          $config.CodeCoverage.OutputPath = './TestResults/coverage.xml'
+          Invoke-Pester -Configuration $config
+
+      - name: Fixture-only CLI WhatIf smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path ./TestResults -Force | Out-Null
+          & ./scripts/winpkg-agent.ps1 plan -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/policy.default.yaml -InventoryPath ./examples/inventory.sample.json -OutputPath ./TestResults/whatif-plan.json -WhatIf
+          if (Test-Path ./TestResults/whatif-plan.json) { throw 'WhatIf wrote a plan artifact' }
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults
+          if-no-files-found: ignore

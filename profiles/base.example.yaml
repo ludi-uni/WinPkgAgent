@@ -1,0 +1,16 @@
+schemaVersion: 1
+packages:
+  - name: 7zip
+    manager: winget
+    id: 7zip.7zip
+    state: present
+    version: latest
+    source: winget
+    category: application
+  - name: git
+    manager: winget
+    id: Git.Git
+    state: present
+    version: latest
+    source: winget
+    category: development

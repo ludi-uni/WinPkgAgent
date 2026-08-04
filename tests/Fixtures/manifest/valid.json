@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "profiles": ["base"],
+  "packages": [
+    { "name": "7zip", "manager": "winget", "id": "7zip.7zip", "state": "present", "version": "24.09", "source": "winget", "category": "application" },
+    { "name": "jq", "manager": "scoop", "id": "jq", "state": "present", "source": "main", "category": "cli" }
+  ]
+}

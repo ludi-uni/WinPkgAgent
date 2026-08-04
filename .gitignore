@@ -1,0 +1,19 @@
+# PowerShell and test artifacts
+.tmp/
+.tools/
+TestResults/
+coverage/
+*.log
+
+# Local package-manager exports and generated workflow artifacts
+artifacts/
+inventory.json
+plan.json
+approval.json
+result.json
+
+# Editor/OS noise
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

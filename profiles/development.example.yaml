@@ -1,0 +1,16 @@
+schemaVersion: 1
+packages:
+  - name: jq
+    manager: scoop
+    id: jq
+    state: present
+    version: latest
+    source: main
+    category: development
+  - name: ripgrep
+    manager: scoop
+    id: ripgrep
+    state: present
+    version: latest
+    source: main
+    category: development

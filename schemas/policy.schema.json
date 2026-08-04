@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://winpkg-agent.dev/schema/policy.json",
+  "title": "WinPkg Agent policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "allowInstall", "allowUpgrade", "allowedManagers", "allowedSources", "protectedPackages", "dangerousCategories", "allowUninstall", "requireApproval", "approvalValidityMinutes", "rejectStateChanges", "maxOperations", "operationTimeoutSeconds", "rebootHandling", "unknownVersionHandling"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "allowInstall": { "type": "boolean" },
+    "allowUpgrade": { "type": "array", "uniqueItems": true, "items": { "enum": ["patch", "minor"] } },
+    "allowedManagers": { "type": "array", "uniqueItems": true, "items": { "enum": ["winget", "scoop"] } },
+    "allowedSources": { "type": "array", "uniqueItems": true, "items": { "enum": ["winget", "main", "extras", "versions"] } },
+    "protectedPackages": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "dangerousCategories": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["driver", "bios", "uefi", "firmware"] },
+      "allOf": [
+        { "contains": { "const": "driver" } },
+        { "contains": { "const": "bios" } },
+        { "contains": { "const": "uefi" } },
+        { "contains": { "const": "firmware" } }
+      ]
+    },
+    "allowUninstall": { "const": false },
+    "requireApproval": { "const": true },
+    "approvalValidityMinutes": { "type": "integer", "minimum": 1, "maximum": 1440 },
+    "rejectStateChanges": { "const": true },
+    "maxOperations": { "type": "integer", "minimum": 1, "maximum": 100 },
+    "operationTimeoutSeconds": { "type": "integer", "minimum": 30, "maximum": 7200 },
+    "rebootHandling": { "const": "record-only" },
+    "unknownVersionHandling": { "const": "block" }
+  }
+}

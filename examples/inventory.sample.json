@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "environment": { "id": "0000000000000000000000000000000000000000000000000000000000000000" },
+  "collectedAt": "2026-08-04T00:00:00Z",
+  "status": "success",
+  "managers": [
+    { "manager": "winget", "version": "v1.12.350", "status": "success", "timedOut": false, "warning": null },
+    { "manager": "scoop", "version": "0.5.3", "status": "success", "timedOut": false, "warning": null }
+  ],
+  "packages": [
+    { "manager": "winget", "id": "7zip.7zip", "displayName": "7-Zip", "installedVersion": "24.09", "availableVersion": null, "source": "winget", "scope": "machine", "metadata": {} },
+    { "manager": "winget", "id": "Git.Git", "displayName": "Git", "installedVersion": "2.51.0", "availableVersion": null, "source": "winget", "scope": "machine", "metadata": {} },
+    { "manager": "scoop", "id": "jq", "displayName": "jq", "installedVersion": "1.8.1", "availableVersion": null, "source": "main", "scope": "user", "metadata": {} },
+    { "manager": "scoop", "id": "ripgrep", "displayName": "ripgrep", "installedVersion": "14.1.1", "availableVersion": null, "source": "main", "scope": "user", "metadata": {} }
+  ],
+  "warnings": []
+}

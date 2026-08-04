@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://winpkg-agent.dev/schema/manifest.json",
+  "title": "WinPkg Agent manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "profiles", "packages"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "profiles": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" } },
+    "packages": { "type": "array", "items": { "$ref": "#/$defs/package" } }
+  },
+  "$defs": {
+    "package": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "manager", "id", "state", "source", "category"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "manager": { "enum": ["winget", "scoop"] },
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+        "state": { "const": "present" },
+        "version": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$" },
+        "source": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "protected": { "type": "boolean", "default": false },
+        "category": { "enum": ["application", "cli", "development", "streaming", "ai", "driver", "bios", "uefi", "firmware"] },
+        "verification": { "$ref": "#/$defs/verification" }
+      }
+    },
+    "verification": {
+      "type": "object", "additionalProperties": false,
+      "required": ["command", "arguments"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "not": { "pattern": "^(?i:pwsh|powershell|cmd|wscript|cscript|mshta|rundll32|regsvr32)(?:\\.exe)?$" }
+        },
+        "arguments": {
+          "type": "array",
+          "items": { "enum": ["--version", "-version", "version", "-v", "-V", "--help", "-h", "/?"] }
+        }
+      }
+    },
+    "command": { "type": "string" }
+  }
+}

@@ -1,0 +1,16 @@
+schemaVersion: 1
+packages:
+  - name: ffmpeg
+    manager: scoop
+    id: ffmpeg
+    state: present
+    version: latest
+    source: main
+    category: streaming
+  - name: obs-studio
+    manager: winget
+    id: OBSProject.OBSStudio
+    state: present
+    version: latest
+    source: winget
+    category: streaming

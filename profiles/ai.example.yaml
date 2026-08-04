@@ -1,0 +1,16 @@
+schemaVersion: 1
+packages:
+  - name: python
+    manager: winget
+    id: Python.Python.3.12
+    state: present
+    version: latest
+    source: winget
+    category: ai
+  - name: ollama
+    manager: winget
+    id: Ollama.Ollama
+    state: present
+    version: latest
+    source: winget
+    category: ai

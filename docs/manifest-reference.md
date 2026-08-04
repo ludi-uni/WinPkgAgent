@@ -1,0 +1,3 @@
+# Manifest reference
+
+Use `config/packages.example.yaml` and validate it with `Test-WpaManifest -Path ./config/packages.example.yaml`. v0.1 accepts `state: present` only. Every package must declare `source` and `category`; the category is never inferred from a package-name substring. Identifiers, manager names, sources, versions, verification fields, and output paths are schema- and allow-list-validated. Optional verification cannot invoke shells or script hosts, and its arguments are limited to the documented version/help switches (`--version`, `-version`, `version`, `-v`, `-V`, `--help`, `-h`, `/?`). See `schemas/manifest.schema.json` for the machine-readable contract.

@@ -1,0 +1,5 @@
+# Threat model
+
+Protected assets are plan integrity, approval intent, host identity, credentials in diagnostics, and package state. Threats include tampered/stale artifacts, argument injection, path traversal/reparse redirection, secret leakage, incomplete manager output, and unattended approval. Hash revalidation, allow-lists, atomic writes, redaction, partial-state blocking, and interactive typed-digest approval address these threats. No rollback or complete-inventory guarantee is made.
+
+The approval digest is an explicit-consent gate, not a digital signature or user authentication mechanism. An actor who can rewrite both plan and approval files can recompute unkeyed hashes; protect the artifact directory with Windows ACLs and review the displayed plan fields and digest in the same trusted console used for approval. Reparse-point checks reduce accidental and pre-existing redirection, but cannot eliminate a same-user concurrent directory-replacement race without an OS-level trusted directory boundary.

@@ -1,0 +1,2 @@
+名前 ID バージョン 利用可能
+Contoso App Contoso.App 1.0 2.0

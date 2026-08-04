@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://winpkg-agent.dev/schema/approval.json", "title": "WinPkg Agent approval", "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "planId", "planHash", "approvedAt", "expiresAt"],
+  "properties": { "schemaVersion": { "const": 1 }, "planId": { "type": "string", "format": "uuid" }, "planHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "approvedAt": { "type": "string", "format": "date-time" }, "expiresAt": { "type": "string", "format": "date-time" } }
+}

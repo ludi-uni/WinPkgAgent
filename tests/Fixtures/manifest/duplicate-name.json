@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "profiles": [],
+  "packages": [
+    { "name": "tool", "manager": "winget", "id": "Vendor.Tool", "state": "present", "source": "winget", "category": "application" },
+    { "name": "tool", "manager": "scoop", "id": "tool", "state": "present", "source": "main", "category": "cli" }
+  ]
+}

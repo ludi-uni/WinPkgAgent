@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://winpkg-agent.dev/schema/plan.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "toolVersion", "planId", "createdAt", "expiresAt", "environmentId", "manifestHash", "policyHash", "inventoryHash", "contentHash", "planHash", "actions", "blockedOperations", "warnings"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "toolVersion": { "type": "string" },
+    "planId": { "type": "string", "format": "uuid" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "environmentId": { "type": "string" },
+    "manifestHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "policyHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "inventoryHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "planHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "actions": { "type": "array", "items": { "$ref": "#/$defs/action" } },
+    "blockedOperations": { "type": "array", "items": { "$ref": "#/$defs/action" } },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "arguments"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "not": { "pattern": "^(?i:pwsh|powershell|cmd|wscript|cscript|mshta|rundll32|regsvr32)(?:\\.exe)?$" }
+        },
+        "arguments": {
+          "type": "array",
+          "items": { "enum": ["--version", "-version", "version", "-v", "-V", "--help", "-h", "/?"] }
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "manager", "id", "source", "classification", "operation", "reasonCode", "reason", "risk", "targetVersion", "verification"],
+      "properties": {
+        "name": { "type": "string" },
+        "manager": { "enum": ["winget", "scoop"] },
+        "id": { "type": "string" },
+        "source": { "type": ["string", "null"] },
+        "classification": { "enum": ["no-op", "install", "upgrade", "blocked", "unmanaged", "unknown"] },
+        "operation": { "type": ["string", "null"], "enum": ["install", "upgrade", null] },
+        "reasonCode": { "type": "string" },
+        "reason": { "type": "string" },
+        "risk": { "type": "string" },
+        "targetVersion": { "type": ["string", "null"], "pattern": "^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$" },
+        "verification": { "oneOf": [{ "$ref": "#/$defs/verification" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "not": {
+            "properties": { "manager": { "const": "scoop" }, "classification": { "const": "upgrade" } },
+            "required": ["manager", "classification"]
+          }
+        },
+        {
+          "if": { "properties": { "classification": { "const": "install" } }, "required": ["classification"] },
+          "then": { "properties": { "operation": { "const": "install" }, "source": { "type": "string", "minLength": 1 } } }
+        },
+        {
+          "if": { "properties": { "classification": { "const": "upgrade" } }, "required": ["classification"] },
+          "then": { "properties": { "operation": { "const": "upgrade" }, "source": { "type": "string", "minLength": 1 } } }
+        },
+        {
+          "if": { "properties": { "classification": { "enum": ["no-op", "blocked", "unmanaged", "unknown"] } }, "required": ["classification"] },
+          "then": { "properties": { "operation": { "type": "null" } } }
+        }
+      ]
+    }
+  }
+}
