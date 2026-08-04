@@ -15,7 +15,6 @@ The exported command help and schemas define the exact parameter surface. Start 
 If `Test-WpaEnvironment` reports `managers.scoop: false`, follow the [official Scoop installation instructions](https://github.com/ScoopInstaller/Install#installation) in a regular, non-admin PowerShell, then open a new session and regenerate inventory and plan. The tool does not install Scoop automatically.
 
 CLI exit codes are stable for automation: `0` success or `-WhatIf`, `1` command/preflight error, `2` invalid validation result, `3` partial apply failure, `4` verification failure, and `5` reboot required (the tool never reboots automatically).
-
 ## Run workspace
 
 Use `New-WpaRun -ManifestPath ./packages.yaml -PolicyPath ./policy.yaml -WorkspacePath ./.wpa` to keep related artifacts together. Then use `Show-WpaRun`, `Approve-WpaRun`, and `Invoke-WpaRun -WhatIf` or `Invoke-WpaRun`. A previous journal blocks a new apply until it is inspected. After a reboot-required result, use `Resume-WpaVerification` explicitly; no automatic reboot or resume is scheduled.
