@@ -92,6 +92,16 @@ Describe 'WinPkgAgent apply and verify result schemas' {
             { Test-WpaDataSchema -Data $sample -SchemaName apply-result } | Should -Throw
         }
 
+        It 'accepts bounded diagnostic structure and rejects legacy diagnostic shape' {
+            $sample=$script:apply | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $sample.operations[0] | Add-Member -NotePropertyName diagnostic -NotePropertyValue @{ text='sample'; truncated=$true; warning='redaction-incomplete' } -Force
+            Test-WpaDataSchema -Data $sample -SchemaName apply-result | Should -BeTrue
+
+            $legacy=$script:apply | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $legacy.operations[0] | Add-Member -NotePropertyName diagnostic -NotePropertyValue 'legacy-diagnostic' -Force
+            { Test-WpaDataSchema -Data $legacy -SchemaName apply-result } | Should -Throw
+        }
+
         It 'rejects invalid statuses and missing required fields' {
             $applySample=$script:apply | ConvertTo-Json -Depth 20 | ConvertFrom-Json
             $applySample.status='unknown'

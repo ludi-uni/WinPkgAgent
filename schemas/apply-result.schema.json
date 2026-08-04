@@ -51,9 +51,17 @@
           "stderrTruncated": { "type": "boolean" },
           "failureSummary": { "type": ["string", "null"] },
           "diagnosticLoggingEnabled": { "type": "boolean" },
-          "diagnostic": { "type": "string" },
-          "diagnosticTruncated": { "type": "boolean" },
-          "diagnosticWarning": { "type": "string" }
+          "redactedSummary": { "type": "string" },
+          "diagnostic": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text", "truncated"],
+            "properties": {
+              "text": { "type": "string" },
+              "truncated": { "type": "boolean" },
+              "warning": { "type": "string" }
+            }
+          }
         }
       }
     },
