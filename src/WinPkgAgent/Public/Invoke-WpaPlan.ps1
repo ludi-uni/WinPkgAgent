@@ -15,9 +15,11 @@ function Invoke-WpaPlan {
     foreach($snapshot in @($plan.managerFingerprints | Where-Object { $null -ne $_ })){
         $current=@($currentInventory.managers | Where-Object manager -eq $snapshot.manager | Select-Object -First 1).fingerprint
         if($null -eq $snapshot.fingerprint -or $null -eq $current){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $($snapshot.manager)"}
-        if([string]$current.signatureStatus -eq 'MANAGER_FINGERPRINT_UNAVAILABLE'){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $($snapshot.manager)"}
-        if([string]$snapshot.fingerprint.signatureStatus -notin @('Valid','not-applicable') -or ([string]$current.signatureStatus -notin @('Valid','not-applicable'))){throw "MANAGER_SIGNATURE_INVALID: $($snapshot.manager)"}
-        if([string]$current.aclAssessment -notlike 'trusted*'){throw "MANAGER_PATH_UNTRUSTED: $($snapshot.manager)"}
+        $snapshotSignatureStatus=[string]$snapshot.fingerprint.signatureStatus
+        $currentSignatureStatus=[string]$current.signatureStatus
+        if([string]::IsNullOrEmpty($snapshotSignatureStatus) -or [string]::IsNullOrEmpty($currentSignatureStatus) -or $snapshotSignatureStatus -in @('unknown','MANAGER_FINGERPRINT_UNAVAILABLE') -or $currentSignatureStatus -in @('unknown','MANAGER_FINGERPRINT_UNAVAILABLE')){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $($snapshot.manager)"}
+        if($snapshotSignatureStatus -in @('NotSigned','Unknown','HashMismatch','NotTrusted','Invalid') -or $currentSignatureStatus -in @('NotSigned','Unknown','HashMismatch','NotTrusted','Invalid')){throw "MANAGER_SIGNATURE_INVALID: $($snapshot.manager)"}
+        if($current.aclAssessment -ne 'trusted' -and $current.aclAssessment -notlike 'trusted;*'){throw "MANAGER_PATH_UNTRUSTED: $($snapshot.manager)"}
         if((Get-WpaObjectHash $snapshot.fingerprint) -ne (Get-WpaObjectHash $current)){throw "MANAGER_EXECUTABLE_CHANGED: $($snapshot.manager)"}
     }
     if((Get-WpaInventoryStateHash $currentInventory) -ne $plan.inventoryHash){throw 'Inventory state changed after plan creation.'}

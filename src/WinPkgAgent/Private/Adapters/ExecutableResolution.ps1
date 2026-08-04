@@ -44,12 +44,25 @@ function Get-WpaManagerFingerprint {
         $signature=try {Get-AuthenticodeSignature -LiteralPath $fullPath -ErrorAction Stop} catch {$null}
         if($null -eq $signature){$signatureStatus='unavailable'}else{$signatureStatus=[string]$signature.Status;$signerSubject=if($signature.SignerCertificate){[string]$signature.SignerCertificate.Subject}else{$null}}
     }
-    $aclAssessment='unknown';try {$null=Get-Acl -LiteralPath $fullPath -ErrorAction Stop;$aclAssessment='trusted'} catch {$aclAssessment='unknown'}
+    $aclAssessment='unknown'
+    try {
+        $null = Get-Acl -LiteralPath $fullPath -ErrorAction Stop
+    } catch {
+        $aclAssessment='unknown'
+    }
     if($Manager -eq 'scoop' -and $fullPath -match '\.(?:cmd|bat)$'){
         $text=[Text.Encoding]::ASCII.GetString($bytes)
-        $match=[regex]::Match($text,'(?im)^\s*(?:call\s+)?["''](?<target>[^"'']+)["'']\s+%\*\s*$')
-        if($match.Success){$target=$match.Groups['target'].Value;if($target -match '[;&|<>`]' -or -not [IO.Path]::IsPathFullyQualified($target) -or -not (Test-Path -LiteralPath $target -PathType Leaf)){throw 'Scoop forwarding target is unavailable.'};$targetItem=Get-Item -LiteralPath $target -Force;if(($targetItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Scoop forwarding target is a reparse point.'};$targetHash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($targetItem.FullName))).ToLowerInvariant();$aclAssessment="trusted;forwardingTargetSha256=$targetHash"}
-        elseif($text -match '(?i)(powershell|pwsh|cmd|invoke-expression|&|\$\()'){$signatureStatus='MANAGER_FINGERPRINT_UNAVAILABLE'}
+        $match=[regex]::Match($text,'(?im)^\s*(?:call\s+)?(?<quote>["''])(?<target>(?:(?!\k<quote>).)+)\k<quote>\s+%\*\s*$')
+        if(-not $match.Success){
+            $signatureStatus='MANAGER_FINGERPRINT_UNAVAILABLE'
+        }else{
+            $target=$match.Groups['target'].Value
+            if($target -match '[;&|<>`]' -or -not [IO.Path]::IsPathFullyQualified($target) -or -not (Test-Path -LiteralPath $target -PathType Leaf)){throw 'Scoop forwarding target is unavailable.'}
+            $targetItem=Get-Item -LiteralPath $target -Force
+            if(($targetItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Scoop forwarding target is a reparse point.'}
+            $targetHash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($targetItem.FullName))).ToLowerInvariant()
+            $aclAssessment="trusted;forwardingTargetSha256=$targetHash"
+        }
     }
     [pscustomobject][ordered]@{manager=$Manager;pathHash=(Get-WpaSha256 -Text $fullPath.ToLowerInvariant());fileSha256=$fileHash;fileVersion=$version;lastWriteTimeUtc=$item.LastWriteTimeUtc.ToString('o');fileLength=[int64]$item.Length;isReparsePoint=$false;signatureStatus=$signatureStatus;signerSubject=$signerSubject;aclAssessment=$aclAssessment}
 }

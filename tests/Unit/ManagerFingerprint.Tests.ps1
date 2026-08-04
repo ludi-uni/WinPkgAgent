@@ -15,6 +15,10 @@ Describe 'manager fingerprints' {
             $first=Get-WpaManagerFingerprint scoop ([IO.Path]::GetFullPath($path));Start-Sleep -Milliseconds 20;[IO.File]::WriteAllText($path,'echo two')
             $second=Get-WpaManagerFingerprint scoop ([IO.Path]::GetFullPath($path));$second.fileSha256 | Should -Not -Be $first.fileSha256
         }
+        It 'marks non-forwarding Scoop shims as unavailable fingerprint' {
+            $path=Join-Path $TestDrive 'scoop-nonforward.cmd';[IO.File]::WriteAllText($path,'echo one')
+            (Get-WpaManagerFingerprint scoop ([IO.Path]::GetFullPath($path))).signatureStatus | Should -Be 'MANAGER_FINGERPRINT_UNAVAILABLE'
+        }
         It 'rejects reparse-point files' {
             $path=Join-Path $TestDrive 'link.exe';Mock Get-Item { [pscustomobject]@{PSIsContainer=$false;Attributes=[IO.FileAttributes]::ReparsePoint;FullName=$path} }
             { Get-WpaManagerFingerprint scoop $path } | Should -Throw '*reparse*'
@@ -33,6 +37,21 @@ Describe 'manager fingerprints' {
             (Get-WpaManagerFingerprint scoop ([IO.Path]::GetFullPath($shim))).signatureStatus | Should -Be 'not-applicable'
             [IO.File]::WriteAllText($shim,'powershell -Command "'+([IO.Path]::GetFullPath($target))+'"')
             (Get-WpaManagerFingerprint scoop ([IO.Path]::GetFullPath($shim))).signatureStatus | Should -Be 'MANAGER_FINGERPRINT_UNAVAILABLE'
+        }
+        It 'fails plan application for unavailable manager fingerprint with apply-gate reason code' {
+            $fingerprint=[pscustomobject]@{manager='scoop';pathHash=('a'*64);fileSha256=('b'*64);fileVersion=$null;lastWriteTimeUtc='2026-01-01T00:00:00Z';fileLength=1;isReparsePoint=$false;signatureStatus='MANAGER_FINGERPRINT_UNAVAILABLE';signerSubject=$null;aclAssessment='trusted'}
+            $action=[pscustomobject]@{name='tool';manager='scoop';id='tool';source='main';classification='install';operation='install';reasonCode='PACKAGE_NOT_INSTALLED';reason='missing';risk='low';targetVersion=$null;verification=$null}
+            $plan=[pscustomobject][ordered]@{schemaVersion=1;toolVersion='0.1.0';planId=[guid]::NewGuid().ToString();createdAt='2026-01-01T00:00:00Z';expiresAt='2099-01-01T00:00:00Z';environmentId='env';manifestHash=('a'*64);policyHash=$null;inventoryHash=$null;actions=@($action);blockedOperations=@();warnings=@();contentHash=$null;planHash=$null;managerFingerprints=@([pscustomobject]@{manager='scoop';fingerprint=$fingerprint})}
+            $approval=[pscustomobject]@{schemaVersion=1;planId=$plan.planId;planHash=$null;approvedAt='2026-01-01T00:00:00Z';expiresAt='2099-01-01T00:00:00Z'}
+            $inventory=[pscustomobject]@{schemaVersion=1;environment=@{id='env'};status='success';managers=@(@{manager='scoop';fingerprint=$fingerprint});packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
+            $policy=[pscustomobject]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch','minor');allowUninstall=$false;allowedManagers=@('winget','scoop');allowedSources=@('winget','main');protectedPackages=@();dangerousCategories=@('driver');requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=600;rebootHandling='record-only';unknownVersionHandling='block'}
+            $plan.inventoryHash=Get-WpaInventoryStateHash $inventory
+            $plan.policyHash=Get-WpaObjectHash $policy
+            $plan.contentHash=Get-WpaObjectHash (Get-WpaPlanContent $plan)
+            $plan.planHash=Get-WpaObjectHash (Get-WpaPlanHashInput $plan)
+            $approval.planHash=$plan.planHash
+            Mock Read-WpaJsonFile { if($Path -eq 'plan.json'){$plan}else{$approval} };Mock Test-WpaDataSchema { $true };Mock Get-WpaEnvironmentId {'env'};Mock Read-WpaPolicyFile {$policy};Mock Get-WpaInventory {$inventory};Mock Invoke-WpaManagerAction { throw 'must not run' }
+            { Invoke-WpaPlan -PlanPath plan.json -ApprovalPath approval.json -PolicyPath policy.yaml -OutputPath $null -VerifyOutputPath $null -SummaryPath $null -Confirm:$false } | Should -Throw '*MANAGER_FINGERPRINT_UNAVAILABLE*'
         }
     }
 }
