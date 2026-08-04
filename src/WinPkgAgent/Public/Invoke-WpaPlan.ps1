@@ -17,7 +17,7 @@ function Invoke-WpaPlan {
         if($null -eq $snapshot.fingerprint -or $null -eq $current){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $($snapshot.manager)"}
         $snapshotSignatureStatus=[string]$snapshot.fingerprint.signatureStatus
         $currentSignatureStatus=[string]$current.signatureStatus
-        if([string]::IsNullOrEmpty($snapshotSignatureStatus) -or [string]::IsNullOrEmpty($currentSignatureStatus) -or $snapshotSignatureStatus -in @('unknown','MANAGER_FINGERPRINT_UNAVAILABLE') -or $currentSignatureStatus -in @('unknown','MANAGER_FINGERPRINT_UNAVAILABLE')){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $($snapshot.manager)"}
+        if([string]::IsNullOrEmpty($snapshotSignatureStatus) -or [string]::IsNullOrEmpty($currentSignatureStatus) -or $snapshotSignatureStatus -in @('unknown','unavailable','MANAGER_FINGERPRINT_UNAVAILABLE') -or $currentSignatureStatus -in @('unknown','unavailable','MANAGER_FINGERPRINT_UNAVAILABLE')){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $($snapshot.manager)"}
         if($snapshotSignatureStatus -in @('NotSigned','Unknown','HashMismatch','NotTrusted','Invalid') -or $currentSignatureStatus -in @('NotSigned','Unknown','HashMismatch','NotTrusted','Invalid')){throw "MANAGER_SIGNATURE_INVALID: $($snapshot.manager)"}
         if($current.aclAssessment -ne 'trusted' -and $current.aclAssessment -notlike 'trusted;*'){throw "MANAGER_PATH_UNTRUSTED: $($snapshot.manager)"}
         if((Get-WpaObjectHash $snapshot.fingerprint) -ne (Get-WpaObjectHash $current)){throw "MANAGER_EXECUTABLE_CHANGED: $($snapshot.manager)"}

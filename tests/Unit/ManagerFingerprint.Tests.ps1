@@ -38,8 +38,8 @@ Describe 'manager fingerprints' {
             [IO.File]::WriteAllText($shim,'powershell -Command "'+([IO.Path]::GetFullPath($target))+'"')
             (Get-WpaManagerFingerprint scoop ([IO.Path]::GetFullPath($shim))).signatureStatus | Should -Be 'MANAGER_FINGERPRINT_UNAVAILABLE'
         }
-        It 'fails plan application for unavailable manager fingerprint with apply-gate reason code' {
-            $fingerprint=[pscustomobject]@{manager='scoop';pathHash=('a'*64);fileSha256=('b'*64);fileVersion=$null;lastWriteTimeUtc='2026-01-01T00:00:00Z';fileLength=1;isReparsePoint=$false;signatureStatus='MANAGER_FINGERPRINT_UNAVAILABLE';signerSubject=$null;aclAssessment='trusted'}
+        It 'maps lowercase unavailable fingerprint status to MANAGER_FINGERPRINT_UNAVAILABLE' {
+            $fingerprint=[pscustomobject]@{manager='scoop';pathHash=('a'*64);fileSha256=('b'*64);fileVersion=$null;lastWriteTimeUtc='2026-01-01T00:00:00Z';fileLength=1;isReparsePoint=$false;signatureStatus='unavailable';signerSubject=$null;aclAssessment='trusted'}
             $action=[pscustomobject]@{name='tool';manager='scoop';id='tool';source='main';classification='install';operation='install';reasonCode='PACKAGE_NOT_INSTALLED';reason='missing';risk='low';targetVersion=$null;verification=$null}
             $plan=[pscustomobject][ordered]@{schemaVersion=1;toolVersion='0.1.0';planId=[guid]::NewGuid().ToString();createdAt='2026-01-01T00:00:00Z';expiresAt='2099-01-01T00:00:00Z';environmentId='env';manifestHash=('a'*64);policyHash=$null;inventoryHash=$null;actions=@($action);blockedOperations=@();warnings=@();contentHash=$null;planHash=$null;managerFingerprints=@([pscustomobject]@{manager='scoop';fingerprint=$fingerprint})}
             $approval=[pscustomobject]@{schemaVersion=1;planId=$plan.planId;planHash=$null;approvedAt='2026-01-01T00:00:00Z';expiresAt='2099-01-01T00:00:00Z'}
