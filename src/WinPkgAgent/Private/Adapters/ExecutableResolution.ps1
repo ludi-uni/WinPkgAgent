@@ -7,7 +7,7 @@ function Resolve-WpaManagerExecutable {
     $commandName = if($Manager -eq 'winget'){'winget'}else{'scoop'}
     foreach($command in @(Get-Command -Name $commandName -All -ErrorAction SilentlyContinue)) {
         $path = if($command.Path){[string]$command.Path}elseif($command.Source){[string]$command.Source}else{$null}
-        if($path){return $path}
+        if($path -and [System.IO.Path]::IsPathFullyQualified($path)){return $path}
     }
 
     $candidates = [System.Collections.Generic.List[string]]::new()
@@ -18,26 +18,7 @@ function Resolve-WpaManagerExecutable {
         if($env:LOCALAPPDATA) {$candidates.Add((Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\winget.exe'))}
     }
     foreach($candidate in $candidates | Select-Object -Unique) {
-        if(Test-Path -LiteralPath $candidate -ErrorAction SilentlyContinue) {return $candidate}
+        if([System.IO.Path]::IsPathFullyQualified($candidate) -and (Test-Path -LiteralPath $candidate -ErrorAction SilentlyContinue)) {return $candidate}
     }
     return $null
-}
-
-function Initialize-WpaManagerPath {
-    [CmdletBinding()]
-    param()
-
-    $current = @($env:Path -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    $prepend = [System.Collections.Generic.List[string]]::new()
-    foreach($manager in @('winget','scoop')) {
-        $executable = Resolve-WpaManagerExecutable -Manager $manager
-        if(-not $executable) { continue }
-        $directory = Split-Path -LiteralPath $executable -Parent
-        if([string]::IsNullOrWhiteSpace($directory)) { continue }
-        if(-not ($current -contains $directory) -and -not ($prepend -contains $directory)) {
-            $prepend.Add($directory)
-        }
-    }
-    if($prepend.Count -gt 0) { $env:Path = ($prepend.ToArray() + $current) -join ';' }
-    return @($prepend)
 }

@@ -30,22 +30,24 @@ Describe 'manager contract parsers' {
         }
     }
 
-    It 'prepends detected manager directories to the current process PATH' {
+    It 'rejects a relative manager executable returned by command discovery' {
         InModuleScope WinPkgAgent {
-            $oldPath = $env:Path
-            try {
-                $env:Path = 'C:\Windows\System32'
-                Mock Resolve-WpaManagerExecutable {
-                    param($Manager)
-                    if($Manager -eq 'scoop'){'C:\Users\test\scoop\shims\scoop.cmd'}
-                    else {'C:\Program Files\WinGet\winget.exe'}
-                }
-                Initialize-WpaManagerPath
-                ($env:Path -split ';')[0] | Should -Be 'C:\Program Files\WinGet'
-                ($env:Path -split ';')[1] | Should -Be 'C:\Users\test\scoop\shims'
-            } finally {
-                $env:Path = $oldPath
-            }
+            Mock Get-Command { [pscustomobject]@{ Path = 'scoop.cmd'; Source = 'scoop.cmd' } }
+            Resolve-WpaManagerExecutable -Manager scoop | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'returns an absolute manager executable path' {
+        InModuleScope WinPkgAgent {
+            Mock Get-Command { [pscustomobject]@{ Path = 'C:\tools\scoop.cmd' } }
+            $resolved = Resolve-WpaManagerExecutable -Manager scoop
+            [System.IO.Path]::IsPathFullyQualified($resolved) | Should -BeTrue
+        }
+    }
+
+    It 'rejects a relative FileName at the process boundary' {
+        InModuleScope WinPkgAgent {
+            { Invoke-WpaProcess -FilePath 'scoop.cmd' -Arguments @('--version') } | Should -Throw
         }
     }
 
