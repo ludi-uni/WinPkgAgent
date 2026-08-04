@@ -31,7 +31,9 @@ WinGet と Scoop の状態・契約は各マネージャーが管理します。
 
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-irm get.scoop.sh | iex
+Invoke-WebRequest https://get.scoop.sh -OutFile ./install-scoop.ps1
+Get-Content ./install-scoop.ps1
+./install-scoop.ps1
 scoop --version
 Get-Command scoop
 ```

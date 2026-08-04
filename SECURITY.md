@@ -15,3 +15,7 @@ Manifest identifiers, sources, versions, verification command names/arguments, a
 ## Release handling
 
 Security fixes should include a regression test, an entry in `CHANGELOG.md`, and a clear statement of whether an upgrade or configuration change is required. Before publishing a release, confirm that `LICENSE` retains the approved `Copyright (c) 2026 Ludi` notice.
+
+## Run workspace and diagnostics
+
+Run artifacts are constrained to the run directory and use fixed filenames. Existing journals require manual inspection before another apply. Diagnostic logging is bounded and best-effort redacted; review it before sharing. Manager ACL and signature checks are conservative and an unavailable assessment remains blocked.
