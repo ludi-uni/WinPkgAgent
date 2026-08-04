@@ -30,6 +30,10 @@ The resolved manager path is used consistently for inventory, install, and upgra
 
 Importing the module does not modify the current process `PATH`. Manager operations use the resolved absolute executable path directly.
 
+## PowerShell 7 is not detected
+
+WinPkgAgent requires PowerShell 7.4 or newer and specifically `pwsh.exe`; it never falls back to `powershell.exe`. Check `Get-Command pwsh.exe`, `where.exe pwsh`, and the standard locations under `$env:ProgramFiles`, `$env:LOCALAPPDATA\Microsoft\WindowsApps`, and `$env:USERPROFILE\.dotnet\tools`. Restart Codex, Windows Terminal, or VS Code after installing PowerShell, or pass `-PowerShellPath` to `Test-WpaEnvironment`. ZIP installations generally require an explicit absolute path. WinPkgAgent does not modify PATH.
+
 ## Approval file is missing
 
 `Invoke-WpaPlan -Preflight` and CLI `invoke -WhatIf` do not require an approval artifact. Normal Apply requires a separate approval artifact. Review the plan and create it interactively as a human:

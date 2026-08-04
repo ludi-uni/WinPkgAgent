@@ -13,3 +13,4 @@
 - Preserve unrelated changes and document limitations rather than claiming unsupported behavior.
 - Run workspace commands must keep all artifacts inside the run directory and reject traversal and reparse points.
 - Manager ACL trust is conservative; unknown ACL state remains blocked rather than being silently trusted.
+- PowerShell runtime discovery must use absolute `pwsh.exe` paths, never mutate PATH, never fall back to `powershell.exe`, and must keep raw runtime paths out of artifacts.

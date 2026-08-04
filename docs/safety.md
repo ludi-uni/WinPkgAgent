@@ -23,3 +23,5 @@ WinPkgAgent never changes PATH and requires manager executables to resolve to ab
 Process output is not persisted by default. Results retain hashes, lengths, and truncation flags. Diagnostic logging is opt-in and remains redacted on a best-effort basis; do not treat it as a guarantee that secrets are removed.
 
 There is no automatic rollback, uninstall, elevation, reboot, driver, firmware, or arbitrary-command path. Exit code 3010 records `rebootRequired` and defers verification until reboot.
+
+PowerShell runtime detection also fails closed: explicit invalid paths are configuration errors, PowerShell 7.3 and Windows PowerShell 5.1 are rejected, and PATH is never rewritten. Runtime artifacts omit the raw executable path.

@@ -107,6 +107,19 @@ Unsupported manager contracts are surfaced as partial/failed inventory, not gues
 
 This software is provided “as is”; review every generated plan and maintain your own backups.
 
+## PowerShell 7 runtime discovery
+
+WinPkgAgent requires `pwsh.exe` from PowerShell 7.4 or newer and never falls back to Windows PowerShell `powershell.exe`. Runtime discovery checks the current Core process first, then `Get-Command pwsh.exe`, standard MSI/preview locations, the Windows Apps alias, and the .NET tool location. It never changes user or machine PATH.
+
+For a ZIP or custom installation, configure an absolute path without persisting it automatically:
+
+```yaml
+runtime:
+  powershellPath: 'D:\Tools\PowerShell\7\pwsh.exe'
+```
+
+Or diagnose a one-time path with `Test-WpaEnvironment -PowerShellPath 'D:\Tools\PowerShell\7\pwsh.exe'`. If Codex, Windows Terminal, or VS Code was open while PowerShell was installed, restart that host or configure the absolute path explicitly.
+
 ## License
 
 MIT; Copyright (c) 2026 Ludi. See [LICENSE](LICENSE).

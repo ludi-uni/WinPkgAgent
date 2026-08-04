@@ -1,16 +1,25 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory,Position=0)][ValidateSet('environment','inventory','manifest','plan','show','approve','validate-plan','invoke','new-run','get-run','show-run','approve-run','invoke-run','resume-verify','initialize','export-candidate')][string]$Command,
-    [string]$Path,[string]$ManifestPath,[string]$PolicyPath,[string]$InventoryPath,[string]$PlanPath,[string]$ApprovalPath,[string]$RunPath,[string]$WorkspacePath,[string]$ApplyResultPath,
+    [string]$Path,[string]$ManifestPath,[string]$PolicyPath,[string]$InventoryPath,[string]$PlanPath,[string]$ApprovalPath,[string]$RunPath,[string]$WorkspacePath,[string]$ApplyResultPath,[string]$PowerShellPath,
     [string]$OutputPath,[string]$MarkdownPath,[string]$VerifyOutputPath,[string]$SummaryPath,[switch]$WhatIf
 )
 $ErrorActionPreference='Stop'
+if($PSVersionTable.PSEdition -ne 'Core' -or $PSVersionTable.PSVersion -lt [version]'7.4.0'){
+    Write-Error @'
+WinPkgAgent requires PowerShell 7.4 or newer.
+
+Run this script with pwsh.exe, not powershell.exe.
+PowerShell 7 is searched without changing PATH. You can configure runtime.powershellPath or pass -PowerShellPath to the environment command.
+'@
+    exit 1
+}
 $modulePath=Join-Path $PSScriptRoot '../src/WinPkgAgent/WinPkgAgent.psd1'
 . (Join-Path $PSScriptRoot 'Private/ExitCode.ps1')
 try {
     Import-Module $modulePath -Force
     $result=switch($Command){
-        environment { Test-WpaEnvironment }
+        environment { Test-WpaEnvironment -PowerShellPath $PowerShellPath -PolicyPath $PolicyPath }
         inventory { Get-WpaInventory -OutputPath $OutputPath -WhatIf:$WhatIf }
         manifest { Test-WpaManifest -Path $Path }
         plan { New-WpaPlan -ManifestPath $ManifestPath -PolicyPath $PolicyPath -InventoryPath $InventoryPath -OutputPath $OutputPath -MarkdownPath $MarkdownPath -WhatIf:$WhatIf }
