@@ -14,6 +14,7 @@
     "manifestHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "policyHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "inventoryHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "managerFingerprints": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["manager", "fingerprint"], "properties": { "manager": { "enum": ["winget", "scoop"] }, "fingerprint": { "$ref": "#/$defs/fingerprint" } } } },
     "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "planHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "actions": { "type": "array", "items": { "$ref": "#/$defs/action" } },
@@ -21,6 +22,7 @@
     "warnings": { "type": "array", "items": { "type": "string" } }
   },
   "$defs": {
+    "fingerprint": { "type": ["object", "null"], "additionalProperties": false, "required": ["manager", "pathHash", "fileSha256", "fileVersion", "lastWriteTimeUtc", "fileLength", "isReparsePoint", "signatureStatus", "signerSubject", "aclAssessment"], "properties": { "manager": { "enum": ["winget", "scoop"] }, "pathHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "fileSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "fileVersion": { "type": ["string", "null"] }, "lastWriteTimeUtc": { "type": "string", "format": "date-time" }, "fileLength": { "type": "integer", "minimum": 0 }, "isReparsePoint": { "const": false }, "signatureStatus": { "type": "string" }, "signerSubject": { "type": ["string", "null"] }, "aclAssessment": { "type": "string" } } },
     "verification": {
       "type": "object",
       "additionalProperties": false,

@@ -13,7 +13,7 @@ function New-WpaPlan {
     $expires=$Now.AddMinutes([int]$policy.approvalValidityMinutes)
     $plan=[pscustomobject][ordered]@{
         schemaVersion=1;toolVersion='0.1.0';planId=[guid]::NewGuid().ToString();createdAt=$Now.ToUniversalTime().ToString('o');expiresAt=$expires.ToUniversalTime().ToString('o')
-        environmentId=$inventory.environment.id;manifestHash=(Get-WpaObjectHash $manifest);policyHash=(Get-WpaObjectHash $policy);inventoryHash=(Get-WpaInventoryStateHash $inventory)
+        environmentId=$inventory.environment.id;manifestHash=(Get-WpaObjectHash $manifest);policyHash=(Get-WpaObjectHash $policy);inventoryHash=(Get-WpaInventoryStateHash $inventory);managerFingerprints=@($inventory.managers | ForEach-Object {[pscustomobject]@{manager=$_.manager;fingerprint=$_.fingerprint}})
         actions=@($evaluation.actions);blockedOperations=@($evaluation.blockedOperations);warnings=@($evaluation.warnings);contentHash=$null;planHash=$null
     }
     $plan.contentHash=Get-WpaObjectHash (Get-WpaPlanContent $plan)

@@ -12,6 +12,14 @@ function Invoke-WpaPlan {
     $policy=Read-WpaPolicyFile $PolicyPath;Test-WpaDataSchema $policy policy|Out-Null
     if((Get-WpaObjectHash $policy) -ne $plan.policyHash){throw 'Policy changed after plan creation.'}
     $currentInventory=Get-WpaInventory
+    foreach($snapshot in @($plan.managerFingerprints | Where-Object { $null -ne $_ })){
+        $current=@($currentInventory.managers | Where-Object manager -eq $snapshot.manager | Select-Object -First 1).fingerprint
+        if($null -eq $snapshot.fingerprint -or $null -eq $current){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $($snapshot.manager)"}
+        if([string]$current.signatureStatus -eq 'MANAGER_FINGERPRINT_UNAVAILABLE'){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $($snapshot.manager)"}
+        if([string]$snapshot.fingerprint.signatureStatus -notin @('Valid','not-applicable') -or ([string]$current.signatureStatus -notin @('Valid','not-applicable'))){throw "MANAGER_SIGNATURE_INVALID: $($snapshot.manager)"}
+        if([string]$current.aclAssessment -notlike 'trusted*'){throw "MANAGER_PATH_UNTRUSTED: $($snapshot.manager)"}
+        if((Get-WpaObjectHash $snapshot.fingerprint) -ne (Get-WpaObjectHash $current)){throw "MANAGER_EXECUTABLE_CHANGED: $($snapshot.manager)"}
+    }
     if((Get-WpaInventoryStateHash $currentInventory) -ne $plan.inventoryHash){throw 'Inventory state changed after plan creation.'}
     $operations=@($plan.actions|Where-Object classification -in @('install','upgrade'))
     if($operations.Count -gt $policy.maxOperations){throw 'Plan exceeds the current maximum operation count.'}
