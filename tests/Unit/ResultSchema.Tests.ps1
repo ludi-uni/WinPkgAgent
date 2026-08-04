@@ -8,7 +8,12 @@ Describe 'WinPkgAgent apply and verify result schemas' {
             $script:planId = [guid]::NewGuid().ToString()
             $script:apply = [pscustomobject][ordered]@{
                 schemaVersion=1;planId=$script:planId;status='success';startedAt='2026-08-05T00:00:00Z';finishedAt='2026-08-05T00:01:00Z'
-                operations=@([pscustomobject]@{manager='scoop';id='tool';operation='install';status='completed';reasonCode='COMMAND_SUCCEEDED';exitCode=0;durationMs=5;rebootRequired=$false})
+                operations=@([pscustomobject]@{
+                    manager='scoop';id='tool';operation='install';status='completed';reasonCode='COMMAND_SUCCEEDED';exitCode=0;durationMs=5;timedOut=$false;rebootRequired=$false
+                    stdoutHash='c6d4f5ecf6b5f9a8a8ad89bcf7df5d5d5b4b4ecfce5f8f2b9e0a3f2c5d2a7f0f1'
+                    stderrHash='c6d4f5ecf6b5f9a8a8ad89bcf7df5d5d5b4b4ecfce5f8f2b9e0a3f2c5d2a7f0f1'
+                    stdoutLength=0;stderrLength=0;stdoutTruncated=$false;stderrTruncated=$false;diagnosticLoggingEnabled=$false
+                })
                 rebootRequired=$false;warnings=@()
             }
             $script:verify = [pscustomobject][ordered]@{
@@ -21,6 +26,39 @@ Describe 'WinPkgAgent apply and verify result schemas' {
         It 'accepts valid apply and verify samples' {
             Test-WpaDataSchema -Data $script:apply -SchemaName apply-result | Should -BeTrue
             Test-WpaDataSchema -Data $script:verify -SchemaName verify-result | Should -BeTrue
+        }
+
+        It 'accepts default no-body operation payload' {
+            $sample = [pscustomobject]@{
+                schemaVersion = 1
+                planId = $script:planId
+                status = 'success'
+                startedAt = '2026-08-05T00:00:00Z'
+                finishedAt = '2026-08-05T00:01:00Z'
+                operations = @(
+                    [pscustomobject]@{
+                        manager = 'scoop'
+                        id = 'tool'
+                        operation = 'install'
+                        status = 'completed'
+                        reasonCode = 'COMMAND_SUCCEEDED'
+                        exitCode = 0
+                        durationMs = 5
+                        timedOut = $false
+                        rebootRequired = $false
+                        stdoutHash = 'c6d4f5ecf6b5f9a8a8ad89bcf7df5d5d5b4b4ecfce5f8f2b9e0a3f2c5d2a7f0f1'
+                        stderrHash = 'c6d4f5ecf6b5f9a8a8ad89bcf7df5d5d5b4b4ecfce5f8f2b9e0a3f2c5d2a7f0f1'
+                        stdoutLength = 0
+                        stderrLength = 0
+                        stdoutTruncated = $false
+                        stderrTruncated = $false
+                        diagnosticLoggingEnabled = $false
+                    }
+                )
+                rebootRequired = $false
+                warnings = @()
+            }
+            Test-WpaDataSchema -Data $sample -SchemaName apply-result | Should -BeTrue
         }
 
         It 'rejects verify fields inside an apply operation' {
@@ -42,6 +80,16 @@ Describe 'WinPkgAgent apply and verify result schemas' {
             $verifySample | Add-Member -NotePropertyName unexpected -NotePropertyValue $true
             { Test-WpaDataSchema -Data $applySample -SchemaName apply-result } | Should -Throw
             { Test-WpaDataSchema -Data $verifySample -SchemaName verify-result } | Should -Throw
+        }
+
+        It 'rejects legacy operation fields stdout/stderr/hash/length/truncated' {
+            $sample=$script:apply | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $sample.operations[0] | Add-Member -NotePropertyName stdout -NotePropertyValue 'legacy-stdout' -Force
+            $sample.operations[0] | Add-Member -NotePropertyName stderr -NotePropertyValue 'legacy-stderr' -Force
+            $sample.operations[0] | Add-Member -NotePropertyName hash -NotePropertyValue 'legacy-hash' -Force
+            $sample.operations[0] | Add-Member -NotePropertyName length -NotePropertyValue 100 -Force
+            $sample.operations[0] | Add-Member -NotePropertyName truncated -NotePropertyValue $true -Force
+            { Test-WpaDataSchema -Data $sample -SchemaName apply-result } | Should -Throw
         }
 
         It 'rejects invalid statuses and missing required fields' {

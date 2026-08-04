@@ -15,7 +15,24 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["manager", "id", "operation", "status", "reasonCode"],
+        "required": [
+          "manager",
+          "id",
+          "operation",
+          "status",
+          "reasonCode",
+          "exitCode",
+          "durationMs",
+          "timedOut",
+          "rebootRequired",
+          "stdoutHash",
+          "stderrHash",
+          "stdoutLength",
+          "stderrLength",
+          "stdoutTruncated",
+          "stderrTruncated",
+          "diagnosticLoggingEnabled"
+        ],
         "properties": {
           "manager": { "enum": ["winget", "scoop"] },
           "id": { "type": "string" },
@@ -24,12 +41,19 @@
           "reasonCode": { "type": "string" },
           "exitCode": { "type": ["integer", "null"] },
           "durationMs": { "type": "integer", "minimum": 0 },
-          "stdout": { "type": "string" },
-          "stderr": { "type": "string" },
+          "timedOut": { "type": "boolean" },
           "rebootRequired": { "type": "boolean" },
-          "hash": { "type": "string" },
-          "length": { "type": "integer", "minimum": 0 },
-          "truncated": { "type": "boolean" }
+          "stdoutHash": { "type": "string", "minLength": 64, "maxLength": 64 },
+          "stderrHash": { "type": "string", "minLength": 64, "maxLength": 64 },
+          "stdoutLength": { "type": "integer", "minimum": 0 },
+          "stderrLength": { "type": "integer", "minimum": 0 },
+          "stdoutTruncated": { "type": "boolean" },
+          "stderrTruncated": { "type": "boolean" },
+          "failureSummary": { "type": ["string", "null"] },
+          "diagnosticLoggingEnabled": { "type": "boolean" },
+          "diagnostic": { "type": "string" },
+          "diagnosticTruncated": { "type": "boolean" },
+          "diagnosticWarning": { "type": "string" }
         }
       }
     },
