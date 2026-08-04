@@ -36,7 +36,7 @@ scoop --version
 Get-Command scoop
 ```
 
-`scoop`が見つからない場合はPowerShellを開き直し、`Test-WpaEnvironment`を再実行してからinventoryとplanを作り直してください。
+マネージャーの検出は、継承した `PATH` だけに依存しません。Codex などの非対話環境では、現在ユーザーの Scoop shim と Windows App 実行エイリアスも確認します。検出した実行ファイルは inventory とパッケージ操作で共通して使用しますが、実体パスはメモリ上だけで扱い、artifact には保存しません。カスタム配置を使う場合はコマンド開始前のプロセス `PATH` に追加してください。ツールは PATH を永続変更したり、マネージャーを自動導入したりしません。
 
 ## クイックスタート
 

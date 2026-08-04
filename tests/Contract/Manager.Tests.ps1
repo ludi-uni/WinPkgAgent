@@ -1,5 +1,35 @@
 Describe 'manager contract parsers' {
     BeforeAll { Import-Module "$PSScriptRoot/../../src/WinPkgAgent/WinPkgAgent.psd1" -Force }
+
+    It 'prefers a manager executable resolved from PATH' {
+        InModuleScope WinPkgAgent {
+            Mock Get-Command { [pscustomobject]@{ Path = 'C:\tools\scoop.cmd' } }
+            Resolve-WpaManagerExecutable -Manager scoop | Should -Be 'C:\tools\scoop.cmd'
+        }
+    }
+
+    It 'resolves the user Scoop shim when it is absent from PATH' {
+        InModuleScope WinPkgAgent {
+            $oldUserProfile = $env:USERPROFILE
+            try {
+                $env:USERPROFILE = 'C:\Users\test'
+                Mock Get-Command { $null }
+                Mock Test-Path { param($LiteralPath) $LiteralPath -eq 'C:\Users\test\scoop\shims\scoop.cmd' }
+                Resolve-WpaManagerExecutable -Manager scoop | Should -Be 'C:\Users\test\scoop\shims\scoop.cmd'
+            } finally {
+                $env:USERPROFILE = $oldUserProfile
+            }
+        }
+    }
+
+    It 'keeps a manager unavailable when no allowed candidate exists' {
+        InModuleScope WinPkgAgent {
+            Mock Get-Command { $null }
+            Mock Test-Path { $false }
+            Resolve-WpaManagerExecutable -Manager winget | Should -BeNullOrEmpty
+        }
+    }
+
     It 'parses winget export and rejects malformed data' {
         InModuleScope WinPkgAgent { $x=ConvertFrom-WpaWingetExport '{"Sources":[{"Packages":[{"PackageIdentifier":"Contoso.App","Version":"1.2.3"}]}]}'; $x[0].Id | Should -Be 'Contoso.App'; (ConvertFrom-WpaWingetExport '{bad') | Should -BeNullOrEmpty }
     }

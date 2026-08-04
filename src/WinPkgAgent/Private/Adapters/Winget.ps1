@@ -1,4 +1,4 @@
-function Test-WpaWingetAvailable { param([string]$Executable='winget'); $null -ne (Get-Command $Executable -ErrorAction SilentlyContinue) }
+function Test-WpaWingetAvailable { param([string]$Executable='winget'); $null -ne (Resolve-WpaManagerExecutable -Manager winget) }
 function ConvertFrom-WpaWingetExport {
     param([Parameter(Mandatory)][string]$Json)
     try { $data = $Json | ConvertFrom-Json -ErrorAction Stop } catch { return $null }
@@ -32,6 +32,8 @@ function ConvertFrom-WpaWingetUpgrade {
 }
 function Get-WpaWingetInventory {
     param([string]$Executable='winget',[int]$TimeoutSeconds=30)
+    $Executable = Resolve-WpaManagerExecutable -Manager winget
+    if(-not $Executable) { return [pscustomobject]@{manager='winget';version=$null;status='failed';timedOut=$false;Packages=@();warning='winget executable unavailable';Available=$false;Success=$false;Raw=$null} }
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('wpa-winget-' + [guid]::NewGuid().ToString('N') + '.json')
     try {
       $r = Invoke-WpaProcess -FilePath $Executable -Arguments @('export','--include-versions','--output',$tmp) -TimeoutSeconds $TimeoutSeconds
@@ -44,5 +46,5 @@ function Get-WpaWingetInventory {
     $status=if($null -eq $packages){'failed'}elseif($null -eq $updates -or $null -eq $managerVersion){'partial'}else{'success'}
     [pscustomobject]@{ manager='winget'; version=$managerVersion; status=$status; timedOut=($r.TimedOut -or $u.TimedOut -or $v.TimedOut); Packages=@($packages | Where-Object {$null -ne $_} | ForEach-Object {[pscustomobject]@{manager='winget';id=$_.Id;displayName=$_.Id;installedVersion=$_.Version;availableVersion=(Get-WpaPropertyValue $_ 'AvailableVersion');source=$_.Source;scope=$null;metadata=@{}}}); warning=if($null -eq $packages){'winget inventory unavailable or malformed'}elseif($null -eq $updates -or $null -eq $managerVersion){'winget version or update output unavailable or unrecognized'}else{$null}; Available=(Test-WpaWingetAvailable $Executable); Success=($null -ne $packages); Raw=$r }
 }
-function Install-WpaWingetPackage { [CmdletBinding(SupportsShouldProcess)]param([string]$Id,[string]$Version,[string]$Source,[int]$TimeoutSeconds=30); if($Id -notmatch '^[A-Za-z0-9_.-]+$'){throw 'invalid id'}; $a=@('install','--id',$Id,'--exact','--disable-interactivity','--accept-source-agreements','--accept-package-agreements'); if($Version){$a+=@('--version',$Version)}; if($Source){$a+=@('--source',$Source)}; if($PSCmdlet.ShouldProcess("winget/$Id",'install')){Invoke-WpaProcess -FilePath 'winget' -Arguments $a -TimeoutSeconds $TimeoutSeconds} }
-function Update-WpaWingetPackage { [CmdletBinding(SupportsShouldProcess)]param([string]$Id,[string]$Version,[string]$Source,[int]$TimeoutSeconds=30); $a=@('upgrade','--id',$Id,'--exact','--disable-interactivity','--accept-source-agreements','--accept-package-agreements'); if($Version){$a+=@('--version',$Version)}; if($Source){$a+=@('--source',$Source)}; if($PSCmdlet.ShouldProcess("winget/$Id",'upgrade')){Invoke-WpaProcess -FilePath 'winget' -Arguments $a -TimeoutSeconds $TimeoutSeconds} }
+function Install-WpaWingetPackage { [CmdletBinding(SupportsShouldProcess)]param([string]$Id,[string]$Version,[string]$Source,[int]$TimeoutSeconds=30); if($Id -notmatch '^[A-Za-z0-9_.-]+$'){throw 'invalid id'}; $Executable=Resolve-WpaManagerExecutable -Manager winget; if(-not $Executable){throw 'winget executable unavailable'}; $a=@('install','--id',$Id,'--exact','--disable-interactivity','--accept-source-agreements','--accept-package-agreements'); if($Version){$a+=@('--version',$Version)}; if($Source){$a+=@('--source',$Source)}; if($PSCmdlet.ShouldProcess("winget/$Id",'install')){Invoke-WpaProcess -FilePath $Executable -Arguments $a -TimeoutSeconds $TimeoutSeconds} }
+function Update-WpaWingetPackage { [CmdletBinding(SupportsShouldProcess)]param([string]$Id,[string]$Version,[string]$Source,[int]$TimeoutSeconds=30); $Executable=Resolve-WpaManagerExecutable -Manager winget; if(-not $Executable){throw 'winget executable unavailable'}; $a=@('upgrade','--id',$Id,'--exact','--disable-interactivity','--accept-source-agreements','--accept-package-agreements'); if($Version){$a+=@('--version',$Version)}; if($Source){$a+=@('--source',$Source)}; if($PSCmdlet.ShouldProcess("winget/$Id",'upgrade')){Invoke-WpaProcess -FilePath $Executable -Arguments $a -TimeoutSeconds $TimeoutSeconds} }

@@ -6,7 +6,7 @@ Install `powershell-yaml` 0.4.12 explicitly using your organization’s approved
 
 ## Scoop is unavailable
 
-Run `Test-WpaEnvironment`. If `managers.scoop` is `false`, Scoop is not discoverable on the current `PATH`. Install it manually from a regular, non-admin PowerShell using the [official Scoop installation instructions](https://github.com/ScoopInstaller/Install#installation):
+Run `Test-WpaEnvironment`. Discovery first uses the inherited `PATH`, then checks the current user's standard Scoop shim location. This supports non-interactive hosts whose PATH was captured before Scoop was installed:
 
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
@@ -15,7 +15,16 @@ scoop --version
 Get-Command scoop
 ```
 
-Start a new PowerShell session if needed, then rerun `Test-WpaEnvironment`, `Get-WpaInventory`, and `New-WpaPlan`. winpkg-agent never installs Scoop or changes execution policy implicitly.
+If the manager is not installed, install it manually from a regular, non-admin PowerShell using the [official Scoop installation instructions](https://github.com/ScoopInstaller/Install#installation). For a custom installation, expose its executable through the process PATH before starting winpkg-agent. winpkg-agent never installs Scoop, changes execution policy, or persistently modifies PATH implicitly.
+
+WinGet discovery also checks the current user's Windows App execution alias. If both `Get-Command winget` and `Test-WpaEnvironment` fail, verify the App Installer registration in the same Windows user context:
+
+```powershell
+Get-Command winget -ErrorAction SilentlyContinue
+Get-AppxPackage -Name Microsoft.DesktopAppInstaller | Select-Object Name, Version, InstallLocation
+```
+
+The resolved manager path is used consistently for inventory, install, and upgrade, but is kept in memory and is not written to inventory, plan, or result artifacts.
 
 ## Approval file is missing
 
