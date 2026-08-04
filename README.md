@@ -44,6 +44,17 @@ Import-Module ./src/WinPkgAgent/WinPkgAgent.psd1
 
 WinGet and Scoop remain responsible for their own package state and command contracts. Approval is a human-only, interactive typed-digest confirmation; AI agents may prepare plans but cannot approve them.
 
+If `Test-WpaEnvironment` reports `managers.scoop: false`, install Scoop manually before collecting inventory. The project never installs Scoop or changes execution policy automatically. From a regular, non-admin PowerShell, follow the [official Scoop installation instructions](https://github.com/ScoopInstaller/Install#installation):
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+irm get.scoop.sh | iex
+scoop --version
+Get-Command scoop
+```
+
+Open a new PowerShell session if `scoop` is not immediately visible on `PATH`, then rerun `Test-WpaEnvironment` and regenerate inventory and plan.
+
 Typical plan actions are `no-op`, `install`, `upgrade`, `blocked`, `unmanaged`, or `unknown`, each with a reason code. For command failures and partial inventory, see [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Quick start

@@ -27,6 +27,17 @@ Import-Module ./src/WinPkgAgent/WinPkgAgent.psd1
 
 WinGet と Scoop の状態・契約は各マネージャーが管理します。承認は人間による対話的なダイジェスト入力であり、AI エージェントは計画を準備できても承認できません。
 
+`Test-WpaEnvironment` で `managers.scoop: false` と表示された場合は、inventory取得前に人間がScoopを導入してください。winpkg-agentはScoopのインストールや実行ポリシー変更を自動では行いません。通常の非管理者PowerShellで、[Scoop公式手順](https://github.com/ScoopInstaller/Install#installation)を確認したうえで実行します。
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+irm get.scoop.sh | iex
+scoop --version
+Get-Command scoop
+```
+
+`scoop`が見つからない場合はPowerShellを開き直し、`Test-WpaEnvironment`を再実行してからinventoryとplanを作り直してください。
+
 ## クイックスタート
 
 ```powershell
