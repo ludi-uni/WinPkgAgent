@@ -21,12 +21,17 @@ Describe 'WinPkgAgent sequential execution safety' {
         }
 
         It 'stops after one failure and records later operations as not run' {
-            Mock Invoke-WpaManagerAction {[pscustomobject]@{ExitCode=1;TimedOut=$false;DurationMs=5;StdOut='';StdErr='failed'}}
+            Mock Invoke-WpaManagerAction {[pscustomobject]@{ExitCode=1;TimedOut=$false;DurationMs=5;StdOut='private output';StdErr='failed'}}
             $result=Invoke-WpaPlan -PlanPath plan.json -ApprovalPath approval.json -PolicyPath policy.yaml -OutputPath $null -VerifyOutputPath $null -SummaryPath $null -Confirm:$false
             Should -Invoke Invoke-WpaManagerAction -Times 1 -Exactly
             $result.apply.status | Should -Be 'partial-failure'
             $result.apply.operations[0].status | Should -Be 'failed'
             $result.apply.operations[1].status | Should -Be 'not-run'
+            $result.apply.operations[0].PSObject.Properties.Name | Should -Not -Contain 'stdout'
+            $result.apply.operations[0].PSObject.Properties.Name | Should -Not -Contain 'stderr'
+            $result.apply.operations[0].stdoutHash | Should -Match '^[0-9a-f]{64}$'
+            $result.apply.operations[0].stdoutLength | Should -Be ([Text.UTF8Encoding]::new($false).GetBytes('private output').Length)
+            $result.apply.operations[0].failureSummary | Should -Be 'Command failed.'
         }
 
         It 'rejects policy drift before any mutation' {
