@@ -5,25 +5,33 @@ function Invoke-WpaPlan {
         [Parameter(Mandatory)][string]$PolicyPath,[Parameter(ParameterSetName='Preflight')][switch]$Preflight,[string]$OutputPath='./artifacts/apply-result.json',[string]$VerifyOutputPath='./artifacts/verify-result.json',[string]$SummaryPath='./artifacts/run-summary.md',[switch]$DiagnosticLogging
     )
     $started=[datetimeoffset]::UtcNow
-    $plan=Read-WpaJsonFile $PlanPath; Test-WpaDataSchema $plan plan|Out-Null;Assert-WpaPlanActionSet -Actions @($plan.actions)|Out-Null;Assert-WpaPlanIntegrity $plan|Out-Null
+    $plan=Read-WpaJsonFile $PlanPath
+    $managerFingerprintsProperty=$plan.PSObject.Properties['managerFingerprints']
+    if($null -eq $managerFingerprintsProperty){throw 'MANAGER_FINGERPRINT_UNAVAILABLE: plan manager fingerprints are missing.'}
+    if($null -eq $plan.PSObject.Properties['blockedOperations']){$plan | Add-Member -NotePropertyName blockedOperations -NotePropertyValue @()}
+    if($null -eq $plan.PSObject.Properties['warnings']){$plan | Add-Member -NotePropertyName warnings -NotePropertyValue @()}
+    if($null -eq $plan.PSObject.Properties['actions']){$plan | Add-Member -NotePropertyName actions -NotePropertyValue @()}
+    Test-WpaDataSchema $plan plan|Out-Null;Assert-WpaPlanActionSet -Actions @($plan.actions)|Out-Null;Assert-WpaPlanIntegrity $plan|Out-Null
     if($started -gt [datetimeoffset]::Parse($plan.expiresAt,[Globalization.CultureInfo]::InvariantCulture)){throw 'Plan has expired.'}
     if($PSCmdlet.ParameterSetName -eq 'Apply'){$approval=Read-WpaJsonFile $ApprovalPath;Test-WpaDataSchema $approval approval|Out-Null;Assert-WpaApproval $approval $plan.planId $plan.planHash $started|Out-Null}
     if($plan.environmentId -ne (Get-WpaEnvironmentId)){throw 'Plan targets a different environment.'}
     $policy=Read-WpaPolicyFile $PolicyPath;Test-WpaDataSchema $policy policy|Out-Null
     if((Get-WpaObjectHash $policy) -ne $plan.policyHash){throw 'Policy changed after plan creation.'}
-    $currentInventory=Get-WpaInventory
-    foreach($snapshot in @($plan.managerFingerprints | Where-Object { $null -ne $_ })){
-        $current=@($currentInventory.managers | Where-Object manager -eq $snapshot.manager | Select-Object -First 1).fingerprint
-        if($null -eq $snapshot.fingerprint -or $null -eq $current){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $($snapshot.manager)"}
-        $snapshotSignatureStatus=[string]$snapshot.fingerprint.signatureStatus
-        $currentSignatureStatus=[string]$current.signatureStatus
-        if([string]::IsNullOrEmpty($snapshotSignatureStatus) -or [string]::IsNullOrEmpty($currentSignatureStatus) -or $snapshotSignatureStatus -in @('unknown','unavailable','MANAGER_FINGERPRINT_UNAVAILABLE') -or $currentSignatureStatus -in @('unknown','unavailable','MANAGER_FINGERPRINT_UNAVAILABLE')){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $($snapshot.manager)"}
-        if($snapshotSignatureStatus -in @('NotSigned','Unknown','HashMismatch','NotTrusted','Invalid') -or $currentSignatureStatus -in @('NotSigned','Unknown','HashMismatch','NotTrusted','Invalid')){throw "MANAGER_SIGNATURE_INVALID: $($snapshot.manager)"}
-        if($current.aclAssessment -ne 'trusted' -and $current.aclAssessment -notlike 'trusted;*'){throw "MANAGER_PATH_UNTRUSTED: $($snapshot.manager)"}
-        if((Get-WpaObjectHash $snapshot.fingerprint) -ne (Get-WpaObjectHash $current)){throw "MANAGER_EXECUTABLE_CHANGED: $($snapshot.manager)"}
+    $currentInventory=ConvertTo-WpaInventoryBoundary (Get-WpaInventory)
+    $operations=@($plan.actions|Where-Object classification -in @('install','upgrade'))
+    $relevantManagers=@($operations | ForEach-Object { [string](Get-WpaPropertyValue $_ 'manager') } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    foreach($manager in $relevantManagers){
+        $snapshot=@($plan.managerFingerprints | Where-Object { (Get-WpaPropertyValue $_ 'manager') -eq $manager } | Select-Object -First 1)
+        if($snapshot.Count -eq 0){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $manager"}
+        $snapshotFingerprint=Get-WpaPropertyValue $snapshot[0] 'fingerprint'
+        Assert-WpaManagerFingerprintEvidence -Manager $manager -Fingerprint $snapshotFingerprint | Out-Null
+        $currentManager=@($currentInventory.managers | Where-Object { (Get-WpaPropertyValue $_ 'manager') -eq $manager } | Select-Object -First 1)
+        if($currentManager.Count -eq 0){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $manager"}
+        $currentFingerprint=Get-WpaPropertyValue $currentManager[0] 'fingerprint'
+        Assert-WpaManagerFingerprintEvidence -Manager $manager -Fingerprint $currentFingerprint | Out-Null
+        if((Get-WpaObjectHash $snapshotFingerprint) -ne (Get-WpaObjectHash $currentFingerprint)){throw "MANAGER_EXECUTABLE_CHANGED: $manager"}
     }
     if((Get-WpaInventoryStateHash $currentInventory) -ne $plan.inventoryHash){throw 'Inventory state changed after plan creation.'}
-    $operations=@($plan.actions|Where-Object classification -in @('install','upgrade'))
     if($operations.Count -gt $policy.maxOperations){throw 'Plan exceeds the current maximum operation count.'}
     foreach($operation in $operations){if($operation.operation -notin @('install','upgrade')){throw 'Plan contains an unsupported operation.'}}
     if($PSCmdlet.ParameterSetName -eq 'Preflight'){
@@ -42,11 +50,12 @@ function Invoke-WpaPlan {
             if($journalPath){$journalSequence++;$fingerprint=@($plan.managerFingerprints|Where-Object manager -eq $operation.manager|Select-Object -First 1).fingerprint;$journal.entries=@($journal.entries)+@([pscustomobject]@{sequence=$journalSequence;operationId=(Get-WpaSha256 -Text ("$($operation.manager)/$($operation.id)/$($operation.operation)"));operationHash=(Get-WpaObjectHash $operation);planHash=$plan.planHash;manager=$operation.manager;id=$operation.id;operation=$operation.operation;managerFingerprintHash=$(if($fingerprint){Get-WpaObjectHash $fingerprint}else{$null});status='starting';recordedAt=[datetimeoffset]::UtcNow.ToString('o')});$journal.updatedAt=[datetimeoffset]::UtcNow.ToString('o');Write-WpaAtomicJson $journalPath $journal}
             $phase='adapter'
             $external=Invoke-WpaManagerAction -Action $operation -TimeoutSeconds ([int]$policy.operationTimeoutSeconds)
-            $reboot=([int64](Get-WpaPropertyValue $external 'ExitCode' -1) -eq 3010) -or [bool](Get-WpaPropertyValue $external 'RebootRequired' $false)
-            $ok=(($external.ExitCode -eq 0 -or $reboot) -and -not $external.TimedOut)
-            $stdoutMeta=Get-WpaOutputMetadata $external.StdOut;$stderrMeta=Get-WpaOutputMetadata $external.StdErr
-            $operationResult=[ordered]@{manager=$operation.manager;id=$operation.id;operation=$operation.operation;status=$(if($ok){'completed'}else{'failed'});reasonCode=$(if($reboot){'REBOOT_REQUIRED'}elseif($ok){'COMMAND_SUCCEEDED'}elseif($external.TimedOut){'COMMAND_TIMED_OUT'}else{'COMMAND_FAILED'});exitCode=$external.ExitCode;durationMs=$external.DurationMs;timedOut=[bool]$external.TimedOut;rebootRequired=$reboot;stdoutHash=$stdoutMeta.hash;stderrHash=$stderrMeta.hash;stdoutLength=$stdoutMeta.length;stderrLength=$stderrMeta.length;stdoutTruncated=$stdoutMeta.truncated;stderrTruncated=$stderrMeta.truncated;failureSummary=$(if($external.TimedOut){'Command timed out.'}elseif(-not $ok){'Command failed.'}else{$null});diagnosticLoggingEnabled=[bool]$DiagnosticLogging}
-            if($DiagnosticLogging){$diagnostic=ConvertTo-WpaDiagnosticText $external.StdOut $external.StdErr;$operationResult.diagnostic=[pscustomobject][ordered]@{text=$diagnostic.text;truncated=$diagnostic.truncated;warning='Secret removal is not complete.'}}
+            $exitCode=[int64](Get-WpaPropertyValue $external 'ExitCode' -1);$timedOut=[bool](Get-WpaPropertyValue $external 'TimedOut' $false);$stdout=Get-WpaPropertyValue $external 'StdOut';$stderr=Get-WpaPropertyValue $external 'StdErr';$durationMs=[int](Get-WpaPropertyValue $external 'DurationMs' 0)
+            $reboot=($exitCode -eq 3010) -or [bool](Get-WpaPropertyValue $external 'RebootRequired' $false)
+            $ok=(($exitCode -eq 0 -or $reboot) -and -not $timedOut)
+            $stdoutMeta=Get-WpaOutputMetadata $stdout;$stderrMeta=Get-WpaOutputMetadata $stderr
+            $operationResult=[ordered]@{manager=$operation.manager;id=$operation.id;operation=$operation.operation;status=$(if($ok){'completed'}else{'failed'});reasonCode=$(if($reboot){'REBOOT_REQUIRED'}elseif($ok){'COMMAND_SUCCEEDED'}elseif($timedOut){'COMMAND_TIMED_OUT'}else{'COMMAND_FAILED'});exitCode=$exitCode;durationMs=$durationMs;timedOut=$timedOut;rebootRequired=$reboot;stdoutHash=$stdoutMeta.hash;stderrHash=$stderrMeta.hash;stdoutLength=$stdoutMeta.length;stderrLength=$stderrMeta.length;stdoutTruncated=$stdoutMeta.truncated;stderrTruncated=$stderrMeta.truncated;failureSummary=$(if($timedOut){'Command timed out.'}elseif(-not $ok){'Command failed.'}else{$null});diagnosticLoggingEnabled=[bool]$DiagnosticLogging}
+            if($DiagnosticLogging){$diagnostic=ConvertTo-WpaDiagnosticText $stdout $stderr;$operationResult.diagnostic=[pscustomobject][ordered]@{text=$diagnostic.text;truncated=$diagnostic.truncated;warning='Secret removal is not complete.'}}
             $operationResult=[pscustomobject]$operationResult
             $phase='journal-after'
             if($journalPath){$journalSequence++;$fingerprint=@($plan.managerFingerprints|Where-Object manager -eq $operation.manager|Select-Object -First 1).fingerprint;$journal.entries=@($journal.entries)+@([pscustomobject]@{sequence=$journalSequence;operationId=(Get-WpaSha256 -Text ("$($operation.manager)/$($operation.id)/$($operation.operation)"));operationHash=(Get-WpaObjectHash $operation);planHash=$plan.planHash;manager=$operation.manager;id=$operation.id;operation=$operation.operation;managerFingerprintHash=$(if($fingerprint){Get-WpaObjectHash $fingerprint}else{$null});status=$operationResult.status;reasonCode=$operationResult.reasonCode;recordedAt=[datetimeoffset]::UtcNow.ToString('o')});$journal.updatedAt=[datetimeoffset]::UtcNow.ToString('o');Write-WpaAtomicJson $journalPath $journal}

@@ -20,3 +20,7 @@ CLI exit codes are stable for automation: `0` success or `-WhatIf`, `1` command/
 Use `New-WpaRun -ManifestPath ./packages.yaml -PolicyPath ./policy.yaml -WorkspacePath ./.wpa` to keep related artifacts together. Then use `Show-WpaRun`, `Approve-WpaRun`, and `Invoke-WpaRun -WhatIf` or `Invoke-WpaRun`. A previous journal blocks a new apply until it is inspected. After a reboot-required result, use `Resume-WpaVerification` explicitly; no automatic reboot or resume is scheduled.
 
 `Initialize-WpaProject` creates safe starter files without installing Scoop, changing PATH, changing execution policy, or overwriting existing files. `Export-WpaManifestCandidate` creates a separate `reviewStatus: pending` candidate and never promotes it to the active manifest.
+
+## PowerShell runtime diagnostics
+
+`Test-WpaEnvironment -PowerShellPath 'D:\Tools\PowerShell\7\pwsh.exe'` applies an absolute path for the current invocation only. A policy may contain `runtime.powershellPath` for a configured absolute path. Invalid explicit paths fail closed and do not fall back silently. The runtime probe uses `-NoLogo -NoProfile -NonInteractive` and validates JSON `PSEdition` and `PSVersion`.

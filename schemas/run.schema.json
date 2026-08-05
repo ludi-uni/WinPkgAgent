@@ -4,8 +4,8 @@
   "type":"object","additionalProperties":false,
   "required":["schemaVersion","runId","createdAt","manifestHash","policyHash","manifestPath","policyPath","inventoryPath","planPath","approvalPath","applyResultPath","verifyResultPath","journalPath","summaryPath","currentStage"],
   "properties":{
-    "schemaVersion":{"const":1},"runId":{"type":"string","pattern":"^[0-9]{8}-[0-9]{6}-[0-9a-f]{8}$"},"createdAt":{"type":"string","format":"date-time"},
-    "manifestHash":{"type":"string","minLength":64,"maxLength":64},"policyHash":{"type":"string","minLength":64,"maxLength":64},
+    "schemaVersion":{"const":1},"runId":{"type":"string","pattern":"^[0-9]{8}-[0-9]{6}-[0-9a-f]{8}$"},"createdAt":{"type":"string","pattern":"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"},
+    "manifestHash":{"type":"string","pattern":"^[a-f0-9]{64}$"},"policyHash":{"type":"string","pattern":"^[a-f0-9]{64}$"},
     "manifestPath":{"const":"manifest.yaml"},"policyPath":{"const":"policy.yaml"},"inventoryPath":{"const":"inventory.json"},"planPath":{"const":"plan.json"},"approvalPath":{"const":"approval.json"},"applyResultPath":{"const":"apply-result.json"},"verifyResultPath":{"const":"verify-result.json"},"journalPath":{"const":"journal.json"},"summaryPath":{"const":"summary.md"},
     "currentStage":{"enum":["created","planned","preflighted","approved","applying","applied","verification-deferred","verified","failed"]}
   }

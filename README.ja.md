@@ -62,4 +62,23 @@ Invoke-WpaPlan -PlanPath ./artifacts/plan.json -PolicyPath ./config/policy.defau
 
 詳細は [docs/architecture.ja.md](docs/architecture.ja.md)、[docs/safety.ja.md](docs/safety.ja.md)、[docs/usage.ja.md](docs/usage.ja.md) を参照してください。
 
+## PowerShell 7 の検出
+
+WinPkgAgentが必要とするのは`pwsh.exe`（PowerShell 7.4以上）です。`powershell.exe`（Windows PowerShell 5.1）へ自動フォールバックしません。現在のCoreプロセス、PATH、標準配置、Preview、Windows Appsエイリアス、`.dotnet\tools`を順に確認します。検出時もユーザーPATH・マシンPATH・module importのPATHは変更しません。
+
+検出できない場合は次を確認してください。
+
+```powershell
+Get-Command pwsh.exe -ErrorAction SilentlyContinue
+where.exe pwsh
+@(
+  "$env:ProgramFiles\PowerShell\7\pwsh.exe"
+  "$env:ProgramFiles\PowerShell\7-preview\pwsh.exe"
+  "$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe"
+  "$env:USERPROFILE\.dotnet\tools\pwsh.exe"
+) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+```
+
+ZIP版などは、policyの`runtime.powershellPath`または`Test-WpaEnvironment -PowerShellPath 'D:\Tools\PowerShell\7\pwsh.exe'`で一時指定できます。PowerShellをインストールした後は、Codex・Terminal・VS Codeの再起動が必要な場合があります。
+
 依存関係、開発方法、脆弱性報告は [CONTRIBUTING.md](CONTRIBUTING.md)、[AGENTS.md](AGENTS.md)、[SECURITY.md](SECURITY.md) に記載しています。

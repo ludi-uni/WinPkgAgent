@@ -10,12 +10,15 @@ Get-ChildItem (Join-Path $root 'schemas') -Filter '*.json' | ForEach-Object {Get
 Import-Module (Join-Path $root 'src/WinPkgAgent/WinPkgAgent.psd1') -Force
 $sampleManifests=@((Join-Path $root 'config/packages.example.yaml'))+@(Get-ChildItem (Join-Path $root 'profiles') -Filter '*.example.yaml' -File | ForEach-Object FullName)
 foreach($sample in $sampleManifests){$sampleResult=Test-WpaManifest -Path $sample;if(-not $sampleResult.valid){throw "Invalid sample manifest $sample`: $($sampleResult.errors -join '; ')"}}
-$expected=@('Approve-WpaPlan','Get-WpaInventory','Invoke-WpaPlan','New-WpaPlan','Show-WpaPlan','Test-WpaEnvironment','Test-WpaManifest','Test-WpaPlan')|Sort-Object
+$expected=@('Approve-WpaPlan','Get-WpaInventory','Invoke-WpaPlan','New-WpaPlan','Show-WpaPlan','Test-WpaEnvironment','Test-WpaManifest','Test-WpaPlan','New-WpaRun','Get-WpaRun','Show-WpaRun','Approve-WpaRun','Invoke-WpaRun','Resume-WpaVerification','Initialize-WpaProject','Export-WpaManifestCandidate')|Sort-Object
 $actual=@((Get-Command -Module WinPkgAgent).Name|Sort-Object)
 if(Compare-Object $expected $actual){throw 'Module manifest and exported commands differ.'}
 if(-not $SkipTests){
     $pester=Get-Module -ListAvailable Pester|Where-Object Version -GE ([version]'5.6.1')|Select-Object -First 1
     if(-not $pester){throw 'Pester 5.6.1 or newer is required to run tests. Dependencies are never installed automatically.'}
-    Import-Module $pester.Path;Invoke-Pester -Path (Join-Path $root 'tests')
+    Import-Module $pester.Path
+    . (Join-Path $root 'tests/PesterConfiguration.ps1')
+    $config=Get-WpaPesterConfiguration -Path (Join-Path $root 'tests')
+    Invoke-Pester -Configuration $config
 }
 Write-Host 'Build validation completed.'

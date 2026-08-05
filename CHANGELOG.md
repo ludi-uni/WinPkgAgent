@@ -8,3 +8,4 @@ All notable changes will be documented here. Until the first tagged release, ent
 - Documents v0.1 boundaries: `state: present` only; no uninstall, elevation, reboot, driver, firmware, or arbitrary command execution.
 - Adds official-action-only Windows CI design and explicit development dependency installation.
 - Adds path-safe run workspaces, explicit post-reboot verification, conservative ACL trust assessment, journal operation identity, project initialization, and pending manifest candidates.
+- Adds PowerShell 7.4+ runtime discovery with configured absolute-path support, artifact-safe runtime fingerprinting, and clear non-PowerShell-7 CLI diagnostics.

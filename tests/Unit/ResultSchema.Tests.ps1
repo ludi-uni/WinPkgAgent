@@ -10,8 +10,8 @@ Describe 'WinPkgAgent apply and verify result schemas' {
                 schemaVersion=1;planId=$script:planId;status='success';startedAt='2026-08-05T00:00:00Z';finishedAt='2026-08-05T00:01:00Z'
                 operations=@([pscustomobject]@{
                     manager='scoop';id='tool';operation='install';status='completed';reasonCode='COMMAND_SUCCEEDED';exitCode=0;durationMs=5;timedOut=$false;rebootRequired=$false
-                    stdoutHash='c6d4f5ecf6b5f9a8a8ad89bcf7df5d5d5b4b4ecfce5f8f2b9e0a3f2c5d2a7f0f1'
-                    stderrHash='c6d4f5ecf6b5f9a8a8ad89bcf7df5d5d5b4b4ecfce5f8f2b9e0a3f2c5d2a7f0f1'
+                    stdoutHash=('c6d4f5ecf6b5f9a8a8ad89bcf7df5d5d5b4b4ecfce5f8f2b9e0a3f2c5d2a7f0a')
+                    stderrHash=('c6d4f5ecf6b5f9a8a8ad89bcf7df5d5d5b4b4ecfce5f8f2b9e0a3f2c5d2a7f0a')
                     stdoutLength=0;stderrLength=0;stdoutTruncated=$false;stderrTruncated=$false;diagnosticLoggingEnabled=$false
                 })
                 rebootRequired=$false;warnings=@()
@@ -46,8 +46,8 @@ Describe 'WinPkgAgent apply and verify result schemas' {
                         durationMs = 5
                         timedOut = $false
                         rebootRequired = $false
-                        stdoutHash = 'c6d4f5ecf6b5f9a8a8ad89bcf7df5d5d5b4b4ecfce5f8f2b9e0a3f2c5d2a7f0f1'
-                        stderrHash = 'c6d4f5ecf6b5f9a8a8ad89bcf7df5d5d5b4b4ecfce5f8f2b9e0a3f2c5d2a7f0f1'
+                        stdoutHash = ('c6d4f5ecf6b5f9a8a8ad89bcf7df5d5d5b4b4ecfce5f8f2b9e0a3f2c5d2a7f0a')
+                        stderrHash = ('c6d4f5ecf6b5f9a8a8ad89bcf7df5d5d5b4b4ecfce5f8f2b9e0a3f2c5d2a7f0a')
                         stdoutLength = 0
                         stderrLength = 0
                         stdoutTruncated = $false
@@ -123,6 +123,44 @@ Describe 'WinPkgAgent apply and verify result schemas' {
             { Test-WpaDataSchema -Data $verifySample -SchemaName verify-result } | Should -Throw
         }
 
+        It 'rejects impossible ISO 8601 calendar, time, and offset values' {
+            foreach ($timestamp in @(
+                '2026-02-30T00:00:00Z',
+                '2026-08-05T25:00:00Z',
+                '2026-08-05T23:60:00Z',
+                '2026-08-05T23:59:59+99:99'
+            )) {
+                $sample = $script:apply | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+                $sample.startedAt = $timestamp
+                { Test-WpaDataSchema -Data $sample -SchemaName apply-result } | Should -Throw
+            }
+        }
+
+        It 'accepts valid ISO 8601 offsets' {
+            $sample = $script:apply | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $sample.startedAt = '2026-08-05T12:34:56.1234567+09:30'
+            $sample.finishedAt = '2026-08-05T03:04:05-05:00'
+            Test-WpaDataSchema -Data $sample -SchemaName apply-result | Should -BeTrue
+
+            $verifySample = $script:verify | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $verifySample.verifiedAt = '2026-08-04T23:04:05+00:00'
+            Test-WpaDataSchema -Data $verifySample -SchemaName verify-result | Should -BeTrue
+        }
+
+        It 'enforces exact SHA-256 hash boundaries' {
+            $short = $script:apply | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $short.operations[0].stdoutHash = 'a' * 63
+            { Test-WpaDataSchema -Data $short -SchemaName apply-result } | Should -Throw
+
+            $valid = $script:apply | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $valid.operations[0].stdoutHash = 'a' * 64
+            Test-WpaDataSchema -Data $valid -SchemaName apply-result | Should -BeTrue
+
+            $long = $script:apply | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $long.operations[0].stdoutHash = 'a' * 65
+            { Test-WpaDataSchema -Data $long -SchemaName apply-result } | Should -Throw
+        }
+
         It 'uses only the separate schemas at the runtime validation boundary' {
             $source=Get-Content (Join-Path $PSScriptRoot '../../src/WinPkgAgent/Public/Invoke-WpaPlan.ps1') -Raw
             $source | Should -Match 'SchemaName apply-result'
@@ -130,10 +168,17 @@ Describe 'WinPkgAgent apply and verify result schemas' {
             $source | Should -Not -Match 'SchemaName result([\s-]|$)'
         }
 
-        It 'maps apply and verify statuses to the existing CLI exit codes' {
-            Get-WpaCliExitCode -Command invoke -Result ([pscustomobject]@{apply=@{status='failed'};verify=@{status='not-run'}}) | Should -Be 3
-            Get-WpaCliExitCode -Command invoke -Result ([pscustomobject]@{apply=@{status='success'};verify=@{status='indeterminate'}}) | Should -Be 4
-            Get-WpaCliExitCode -Command invoke -Result ([pscustomobject]@{apply=@{status='success'};verify=@{status='reboot-required'}}) | Should -Be 5
-        }
+    }
+}
+
+Describe 'WinPkgAgent CLI exit-code contract' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot '../../scripts/Private/ExitCode.ps1')
+    }
+
+    It 'maps apply and verify statuses through the existing CLI helper' {
+        Get-WpaCliExitCode -Command invoke -Result ([pscustomobject]@{apply=@{status='failed'};verify=@{status='not-run'}}) | Should -Be 3
+        Get-WpaCliExitCode -Command invoke -Result ([pscustomobject]@{apply=@{status='success'};verify=@{status='indeterminate'}}) | Should -Be 4
+        Get-WpaCliExitCode -Command invoke -Result ([pscustomobject]@{apply=@{status='success'};verify=@{status='reboot-required'}}) | Should -Be 5
     }
 }

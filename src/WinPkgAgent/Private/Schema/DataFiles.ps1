@@ -31,6 +31,60 @@ function Read-WpaYamlFile {
     try { return ConvertFrom-Yaml -Yaml $text -Ordered } catch { throw "Invalid YAML file: $($_.Exception.Message)" }
 }
 
+function Test-WpaIso8601Timestamp {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Value,
+        [Parameter(Mandatory)][string]$FieldName
+    )
+    $match = [regex]::Match($Value, '^(?<year>[0-9]{4})-(?<month>[0-9]{2})-(?<day>[0-9]{2})T(?<hour>[0-9]{2}):(?<minute>[0-9]{2}):(?<second>[0-9]{2})(?:\.[0-9]+)?(?<zone>Z|[+-](?<offsetHour>[0-9]{2}):(?<offsetMinute>[0-9]{2}))$')
+    if (-not $match.Success) { throw "Invalid ISO 8601 timestamp in $FieldName." }
+    try {
+        [datetime]::new(
+            [int]$match.Groups['year'].Value,
+            [int]$match.Groups['month'].Value,
+            [int]$match.Groups['day'].Value,
+            [int]$match.Groups['hour'].Value,
+            [int]$match.Groups['minute'].Value,
+            [int]$match.Groups['second'].Value,
+            [DateTimeKind]::Unspecified
+        ) | Out-Null
+    } catch {
+        throw "Invalid ISO 8601 timestamp in $FieldName."
+    }
+    if ($match.Groups['zone'].Value -ne 'Z' -and ([int]$match.Groups['offsetHour'].Value -gt 23 -or [int]$match.Groups['offsetMinute'].Value -gt 59)) {
+        throw "Invalid ISO 8601 timestamp offset in $FieldName."
+    }
+}
+
+function Test-WpaJsonTimestampElements {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][System.Text.Json.JsonElement]$Element)
+    switch ($Element.ValueKind) {
+        Object {
+            foreach ($property in $Element.EnumerateObject()) {
+                if ($property.Name -in @('approvedAt', 'collectedAt', 'createdAt', 'expiresAt', 'finishedAt', 'lastWriteTimeUtc', 'startedAt', 'updatedAt', 'verifiedAt')) {
+                    if ($property.Value.ValueKind -eq [System.Text.Json.JsonValueKind]::String) {
+                        Test-WpaIso8601Timestamp -Value $property.Value.GetString() -FieldName $property.Name
+                    }
+                } else {
+                    Test-WpaJsonTimestampElements -Element $property.Value
+                }
+            }
+        }
+        Array {
+            foreach ($item in $Element.EnumerateArray()) { Test-WpaJsonTimestampElements -Element $item }
+        }
+    }
+}
+
+function Test-WpaSchemaTimestamps {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Json)
+    $document = [System.Text.Json.JsonDocument]::Parse($Json)
+    try { Test-WpaJsonTimestampElements -Element $document.RootElement } finally { $document.Dispose() }
+}
+
 function Test-WpaDataSchema {
     [CmdletBinding()]
     param(
@@ -44,6 +98,7 @@ function Test-WpaDataSchema {
     if (-not (Test-Json -Json $json -SchemaFile $schemaPath -ErrorVariable errors)) {
         throw "Data does not match $SchemaName schema: $($errors -join '; ')"
     }
+    Test-WpaSchemaTimestamps -Json $json
     return $true
 }
 

@@ -65,15 +65,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $config = New-PesterConfiguration
-          $config.Run.Path = './tests'
-          $config.Run.Exit = $true
-          $config.TestResult.Enabled = $true
-          $config.TestResult.OutputPath = './TestResults/pester.xml'
-          $config.TestResult.OutputFormat = 'JUnitXml'
-          $config.CodeCoverage.Enabled = $true
-          $config.CodeCoverage.Path = './src/WinPkgAgent/**/*.ps1'
-          $config.CodeCoverage.OutputPath = './TestResults/coverage.xml'
+          . ./tests/PesterConfiguration.ps1
+          $config = Get-WpaPesterConfiguration -Path './tests'
           Invoke-Pester -Configuration $config
 
       - name: Fixture-only CLI WhatIf smoke

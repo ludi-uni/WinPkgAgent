@@ -1,10 +1,39 @@
 Describe 'manager contract parsers' {
     BeforeAll { Import-Module "$PSScriptRoot/../../src/WinPkgAgent/WinPkgAgent.psd1" -Force }
 
-    It 'prefers a manager executable resolved from PATH' {
+    It 'prefers an existing manager executable resolved from PATH' {
         InModuleScope WinPkgAgent {
-            Mock Get-Command { [pscustomobject]@{ Path = 'C:\tools\scoop.cmd' } }
-            Resolve-WpaManagerExecutable -Manager scoop | Should -Be 'C:\tools\scoop.cmd'
+            $path = Join-Path $TestDrive 'scoop.cmd'
+            [IO.File]::WriteAllText($path, '@echo off')
+            Mock Get-Command { [pscustomobject]@{ Path = $path } }
+            Resolve-WpaManagerExecutable -Manager scoop | Should -Be ([IO.Path]::GetFullPath($path))
+        }
+    }
+
+    It 'accepts an absolute Source-only command result when the file exists' {
+        InModuleScope WinPkgAgent {
+            $path = Join-Path $TestDrive 'winget.exe'
+            [IO.File]::WriteAllText($path, 'fixture')
+            Mock Get-Command { [pscustomobject]@{ Source = $path } }
+            Resolve-WpaManagerExecutable -Manager winget | Should -Be ([IO.Path]::GetFullPath($path))
+        }
+    }
+
+    It 'falls back to Source when Path is whitespace' {
+        InModuleScope WinPkgAgent {
+            $path = Join-Path $TestDrive 'scoop.cmd'
+            [IO.File]::WriteAllText($path, '@echo off')
+            Mock Get-Command { [pscustomobject]@{ Path = '  '; Source = $path } }
+            Resolve-WpaManagerExecutable -Manager scoop | Should -Be ([IO.Path]::GetFullPath($path))
+        }
+    }
+
+    It 'ignores command results with neither Path nor Source' {
+        InModuleScope WinPkgAgent {
+            Mock Get-Command { [pscustomobject]@{ Name = 'scoop' } }
+            Mock Test-Path { $false }
+            { Resolve-WpaManagerExecutable -Manager scoop } | Should -Not -Throw
+            Resolve-WpaManagerExecutable -Manager scoop | Should -BeNullOrEmpty
         }
     }
 
@@ -32,14 +61,23 @@ Describe 'manager contract parsers' {
 
     It 'rejects a relative manager executable returned by command discovery' {
         InModuleScope WinPkgAgent {
-            Mock Get-Command { [pscustomobject]@{ Path = 'scoop.cmd'; Source = 'scoop.cmd' } }
-            Resolve-WpaManagerExecutable -Manager scoop | Should -BeNullOrEmpty
+            $oldUserProfile = $env:USERPROFILE
+            try {
+                $env:USERPROFILE = Join-Path $TestDrive 'no-user-profile'
+                Mock Get-Command { [pscustomobject]@{ Path = 'scoop.cmd'; Source = 'scoop.cmd' } }
+                Mock Test-Path { $false }
+                Resolve-WpaManagerExecutable -Manager scoop | Should -BeNullOrEmpty
+            } finally {
+                $env:USERPROFILE = $oldUserProfile
+            }
         }
     }
 
     It 'returns an absolute manager executable path' {
         InModuleScope WinPkgAgent {
-            Mock Get-Command { [pscustomobject]@{ Path = 'C:\tools\scoop.cmd' } }
+            $path = Join-Path $TestDrive 'scoop.cmd'
+            [IO.File]::WriteAllText($path, '@echo off')
+            Mock Get-Command { [pscustomobject]@{ Path = $path } }
             $resolved = Resolve-WpaManagerExecutable -Manager scoop
             [System.IO.Path]::IsPathFullyQualified($resolved) | Should -BeTrue
         }

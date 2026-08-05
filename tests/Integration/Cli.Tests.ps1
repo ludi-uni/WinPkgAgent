@@ -7,7 +7,7 @@ Describe 'winpkg-agent CLI' {
     It 'exports exactly the documented public commands' {
         Import-Module $module -Force
         $actual = @((Get-Command -Module WinPkgAgent).Name | Sort-Object)
-        $expected = @(@('Approve-WpaPlan','Get-WpaInventory','Invoke-WpaPlan','New-WpaPlan','Show-WpaPlan','Test-WpaEnvironment','Test-WpaManifest','Test-WpaPlan') | Sort-Object)
+        $expected = @(@('Approve-WpaPlan','Get-WpaInventory','Invoke-WpaPlan','New-WpaPlan','Show-WpaPlan','Test-WpaEnvironment','Test-WpaManifest','Test-WpaPlan','New-WpaRun','Get-WpaRun','Show-WpaRun','Approve-WpaRun','Invoke-WpaRun','Resume-WpaVerification','Initialize-WpaProject','Export-WpaManifestCandidate') | Sort-Object)
         $actual | Should -Be $expected
     }
 

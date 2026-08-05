@@ -69,10 +69,13 @@ function Get-WpaInventoryStateHash {
     [CmdletBinding()]
     param([Parameter(Mandatory)][object]$Inventory)
 
-    $managers = @($Inventory.managers | ForEach-Object {
+    $environment = Get-WpaPropertyValue $Inventory 'environment'
+    $environmentId = Get-WpaPropertyValue $environment 'id'
+    if([string]::IsNullOrWhiteSpace([string]$environmentId)){throw 'INVENTORY_ENVIRONMENT_UNAVAILABLE: inventory environment identity is missing.'}
+    $managers = @(Get-WpaPropertyValue $Inventory 'managers' @() | ForEach-Object {
         [ordered]@{ manager = $_.manager; status = $_.status; version = $_.version; fingerprint = (Get-WpaPropertyValue $_ 'fingerprint') }
     } | Sort-Object manager)
-    $packages = @($Inventory.packages | ForEach-Object {
+    $packages = @(Get-WpaPropertyValue $Inventory 'packages' @() | ForEach-Object {
         [ordered]@{
             manager = (Get-WpaPropertyValue $_ 'manager'); id = (Get-WpaPropertyValue $_ 'id'); displayName = (Get-WpaPropertyValue $_ 'displayName')
             installedVersion = (Get-WpaPropertyValue $_ 'installedVersion' (Get-WpaPropertyValue $_ 'Version')); availableVersion = (Get-WpaPropertyValue $_ 'availableVersion')
@@ -80,10 +83,43 @@ function Get-WpaInventoryStateHash {
         }
     } | Sort-Object manager,id)
     $state = [ordered]@{
-        environmentId = $Inventory.environment.id
+        environmentId = $environmentId
         status = (Get-WpaPropertyValue $Inventory 'status' 'success')
         managers = $managers
         packages = $packages
     }
     return Get-WpaObjectHash -InputObject $state
+}
+
+function ConvertTo-WpaInventoryBoundary {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$Inventory)
+
+    $environment = Get-WpaPropertyValue $Inventory 'environment'
+    $environmentId = Get-WpaPropertyValue $environment 'id'
+    if([string]::IsNullOrWhiteSpace([string]$environmentId)){throw 'INVENTORY_ENVIRONMENT_UNAVAILABLE: inventory environment identity is missing.'}
+
+    $normalized=[ordered]@{}
+    foreach($property in @($Inventory.PSObject.Properties | Where-Object MemberType -in @('NoteProperty','Property'))){$normalized[$property.Name]=$property.Value}
+    $normalized['environment']=[pscustomobject]@{id=$environmentId}
+    $normalized['managers']=@((Get-WpaPropertyValue $Inventory 'managers' @()))
+    $normalized['packages']=@((Get-WpaPropertyValue $Inventory 'packages' @()))
+    $normalized['warnings']=@((Get-WpaPropertyValue $Inventory 'warnings' @()))
+    return [pscustomobject]$normalized
+}
+
+function Assert-WpaManagerFingerprintEvidence {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Manager,
+        [AllowNull()][object]$Fingerprint
+    )
+
+    if($null -eq $Fingerprint){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $Manager"}
+    $signatureStatus=[string](Get-WpaPropertyValue $Fingerprint 'signatureStatus')
+    $aclAssessment=[string](Get-WpaPropertyValue $Fingerprint 'aclAssessment')
+    if([string]::IsNullOrWhiteSpace($signatureStatus) -or [string]::IsNullOrWhiteSpace($aclAssessment) -or $signatureStatus -in @('unknown','unavailable','MANAGER_FINGERPRINT_UNAVAILABLE')){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $Manager"}
+    if($signatureStatus -in @('NotSigned','Unknown','HashMismatch','NotTrusted','Invalid')){throw "MANAGER_SIGNATURE_INVALID: $Manager"}
+    if($aclAssessment -ne 'trusted' -and $aclAssessment -notlike 'trusted;*'){throw "MANAGER_PATH_UNTRUSTED: $Manager"}
+    return $true
 }
