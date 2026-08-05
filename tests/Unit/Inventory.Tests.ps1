@@ -18,8 +18,22 @@ Describe 'inventory aggregation' {
             $r.status | Should -Be 'partial'
             $r.managers | Where-Object manager -eq 'winget' | Select-Object -ExpandProperty status | Should -Be 'success'
             $r.packages.Count | Should -Be 1
-            $r.warnings | Should -Contain 'fingerprint unavailable'
+            $r.warnings | Should -Match 'fingerprint unavailable'
             $r.managers | Where-Object manager -eq 'winget' | Select-Object -ExpandProperty fingerprint | Should -BeNullOrEmpty
+        }
+    }
+    It 'preserves adapter and fingerprint warnings together' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\winget.exe' }
+            Mock Get-WpaManagerFingerprint { throw 'fingerprint unavailable' }
+            $r=Get-WpaInventoryAggregate -Adapters @{
+                winget={ [pscustomobject]@{Success=$true;Packages=@([pscustomobject]@{Id='ok'});Warning='adapter timeout'} }
+            }
+            $manager=$r.managers | Where-Object manager -eq 'winget'
+            $manager.status | Should -Be 'success'
+            $manager.warning | Should -Match 'adapter timeout'
+            $manager.warning | Should -Match 'fingerprint unavailable'
+            $r.warnings | Should -Contain $manager.warning
         }
     }
     It 'never invokes mutation adapters' { InModuleScope WinPkgAgent { (Get-Command Get-WpaInventoryAggregate).CommandType | Should -Be 'Function' } }
