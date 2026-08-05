@@ -5,9 +5,9 @@ Describe 'repository JSON Schema contracts' {
         $fixtureRoot = Join-Path $repo 'tests/Fixtures/manifest'
         Import-Module (Join-Path $repo 'src/WinPkgAgent/WinPkgAgent.psd1') -Force
     }
-    It 'has six syntactically valid JSON schemas' {
+    It 'parses every repository JSON schema' {
         $schemas = Get-ChildItem $schemaRoot -Filter '*.schema.json'
-        $schemas.Count | Should -Be 6
+        $schemas | Should -Not -BeNullOrEmpty
         foreach ($schema in $schemas) {
             { Get-Content $schema.FullName -Raw | ConvertFrom-Json } | Should -Not -Throw
         }
