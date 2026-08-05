@@ -1,5 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$script:WpaProcessFactory = $null
 
 $privateRoot = Join-Path $PSScriptRoot 'Private'
 $publicRoot = Join-Path $PSScriptRoot 'Public'
