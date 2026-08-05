@@ -7,7 +7,7 @@ function Resolve-WpaManagerExecutable {
     $commandName = if($Manager -eq 'winget'){'winget'}else{'scoop'}
     foreach($command in @(Get-Command -Name $commandName -All -ErrorAction SilentlyContinue)) {
         $path = Get-WpaPropertyValue $command 'Path'
-        if($null -eq $path){$path = Get-WpaPropertyValue $command 'Source'}
+        if([string]::IsNullOrWhiteSpace([string]$path)){$path = Get-WpaPropertyValue $command 'Source'}
         $path = if($null -ne $path){[string]$path}else{$null}
         if($path -and [System.IO.Path]::IsPathFullyQualified($path) -and (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)){return [IO.Path]::GetFullPath($path)}
     }

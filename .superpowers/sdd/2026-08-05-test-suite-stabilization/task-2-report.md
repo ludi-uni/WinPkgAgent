@@ -31,3 +31,24 @@
 ## Commit
 
 - Commit message: `fix: stabilize manager and process contracts`
+
+## Review fix round 1
+
+### Fixes
+
+- Removed the production-visible `-ProcessRunner` early return. The adapter now always constructs `ProcessStartInfo` and owns `Start`, `WaitForExit`, `Kill`, the five-second bounded termination wait, output redaction/bounding, duration normalization, and result metadata.
+- Added a module-scoped test-only process factory seam that receives the constructed `StartInfo`; it cannot replace the adapter lifecycle or timeout logic. Fixture tests verify the literal `ArgumentList`, force the timeout path with a Process-shaped fixture, return under one second, and bound stderr to 4096 characters with non-negative bounded duration metadata.
+- Resolver now treats null, empty, and whitespace `Path` values as unavailable before falling back to `Source`; added a deterministic whitespace-Path/absolute-Source fixture test.
+
+### Exact validation
+
+- Command: `$ErrorActionPreference='Continue'; Import-Module (Join-Path (Get-Location) '.tools/Pester/5.6.1/Pester.psd1') -Force; . './tests/PesterConfiguration.ps1'; $config=Get-WpaPesterConfiguration -Path @('./tests/Contract/Manager.Tests.ps1','./tests/Contract/Process.Tests.ps1','./tests/Unit/ManagerFingerprint.Tests.ps1') -DisableRegistry; $config.CodeCoverage.Enabled=$false; $config.TestResult.Enabled=$false; Invoke-Pester -Configuration $config`
+  - Pester 5.6.1: 31 passed, 0 failed, 0 skipped; exit 0.
+- Command: `$ErrorActionPreference='Continue'; Import-Module (Join-Path (Get-Location) '.tools/Pester/5.6.1/Pester.psd1') -Force; . './tests/PesterConfiguration.ps1'; $config=Get-WpaPesterConfiguration -Path @('./tests/Contract/Manager.Tests.ps1','./tests/Contract/Process.Tests.ps1','./tests/Unit/ManagerFingerprint.Tests.ps1') -DisableRegistry; $config.Output.Verbosity='None'; Invoke-Pester -Configuration $config; Write-Output "PesterExit=$LASTEXITCODE"`
+  - Shared configuration with TestRegistry disabled: `PesterExit=0`; focused tests passed. The managed runner emitted three non-fatal `Get-CimInstance: アクセスは拒否されました` messages during Pester coverage/JUnit environment metadata handling.
+- PowerShell parser validation for the five changed source/test files: passed.
+- `git diff --check`: passed.
+
+### Review concerns
+
+- The test-only factory is intentionally module-scoped and not a parameter or exported command. Production callers cannot supply a runner that bypasses the adapter lifecycle.

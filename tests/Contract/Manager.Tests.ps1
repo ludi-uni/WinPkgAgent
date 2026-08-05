@@ -19,6 +19,15 @@ Describe 'manager contract parsers' {
         }
     }
 
+    It 'falls back to Source when Path is whitespace' {
+        InModuleScope WinPkgAgent {
+            $path = Join-Path $TestDrive 'scoop.cmd'
+            [IO.File]::WriteAllText($path, '@echo off')
+            Mock Get-Command { [pscustomobject]@{ Path = '  '; Source = $path } }
+            Resolve-WpaManagerExecutable -Manager scoop | Should -Be ([IO.Path]::GetFullPath($path))
+        }
+    }
+
     It 'ignores command results with neither Path nor Source' {
         InModuleScope WinPkgAgent {
             Mock Get-Command { [pscustomobject]@{ Name = 'scoop' } }
