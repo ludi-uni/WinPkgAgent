@@ -16,6 +16,9 @@ if(Compare-Object $expected $actual){throw 'Module manifest and exported command
 if(-not $SkipTests){
     $pester=Get-Module -ListAvailable Pester|Where-Object Version -GE ([version]'5.6.1')|Select-Object -First 1
     if(-not $pester){throw 'Pester 5.6.1 or newer is required to run tests. Dependencies are never installed automatically.'}
-    Import-Module $pester.Path;Invoke-Pester -Path (Join-Path $root 'tests')
+    Import-Module $pester.Path
+    . (Join-Path $root 'tests/PesterConfiguration.ps1')
+    $config=Get-WpaPesterConfiguration -Path (Join-Path $root 'tests')
+    Invoke-Pester -Configuration $config
 }
 Write-Host 'Build validation completed.'
