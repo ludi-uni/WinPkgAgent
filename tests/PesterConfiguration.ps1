@@ -4,16 +4,21 @@ function Test-WpaPesterRegistryAvailable {
 
     $registryRoot = 'Microsoft.PowerShell.Core\Registry::HKEY_CURRENT_USER\Software\Pester'
     $probePath = Join-Path $registryRoot ("WinPkgAgent-$([guid]::NewGuid().ToString('N'))")
+    $probeCreated = $false
 
     try {
+        if (-not (Test-Path -Path $registryRoot -PathType Container -ErrorAction Stop)) {
+            New-Item -Path $registryRoot -ErrorAction Stop | Out-Null
+        }
         New-Item -Path $probePath -ErrorAction Stop | Out-Null
+        $probeCreated = $true
         return $true
     }
     catch {
         return $false
     }
     finally {
-        if (Test-Path -LiteralPath $probePath) {
+        if ($probeCreated) {
             Remove-Item -LiteralPath $probePath -Force -ErrorAction SilentlyContinue
         }
     }

@@ -26,12 +26,52 @@ Describe 'shared Pester configuration' {
         $configuration.TestRegistry.Enabled.Value | Should -BeFalse
     }
 
-    It 'disables TestRegistry when the runner cannot create the Pester registry key' {
-        Mock Test-WpaPesterRegistryAvailable { $false }
+    It 'enables TestRegistry after creating an absent Pester root and cleans up only the child probe' {
+        $registryRoot = 'Microsoft.PowerShell.Core\Registry::HKEY_CURRENT_USER\Software\Pester'
+        Mock Test-Path {
+            param($Path, $LiteralPath)
+            if ($Path -eq $registryRoot) {
+                return $false
+            }
+
+            return $true
+        }
+        Mock New-Item { param($Path) }
+        Mock Remove-Item { param($LiteralPath) }
+
+        $configuration = Get-WpaPesterConfiguration -Path (Join-Path $root 'tests')
+
+        $configuration.TestRegistry.Enabled.Value | Should -BeTrue
+        Assert-MockCalled New-Item -ParameterFilter { $Path -eq $registryRoot } -Times 1 -Exactly
+        Assert-MockCalled New-Item -ParameterFilter { $Path -ne $registryRoot } -Times 1 -Exactly
+        Assert-MockCalled Remove-Item -ParameterFilter { $LiteralPath -ne $registryRoot } -Times 1 -Exactly
+        Assert-MockCalled Remove-Item -ParameterFilter { $LiteralPath -eq $registryRoot } -Times 0 -Exactly
+    }
+
+    It 'disables TestRegistry when the Pester root cannot be inspected or created' {
+        Mock Test-Path { throw [UnauthorizedAccessException]::new('denied') }
+        Mock New-Item { param($Path) }
+        Mock Remove-Item { param($LiteralPath) }
 
         $configuration = Get-WpaPesterConfiguration -Path (Join-Path $root 'tests')
 
         $configuration.TestRegistry.Enabled.Value | Should -BeFalse
-        Assert-MockCalled Test-WpaPesterRegistryAvailable -Times 1 -Exactly
+        Assert-MockCalled New-Item -Times 0 -Exactly
+    }
+
+    It 'disables TestRegistry when a child probe cannot be created' {
+        $registryRoot = 'Microsoft.PowerShell.Core\Registry::HKEY_CURRENT_USER\Software\Pester'
+        Mock Test-Path {
+            param($Path)
+            return $Path -eq $registryRoot
+        }
+        Mock New-Item { throw [UnauthorizedAccessException]::new('denied') }
+        Mock Remove-Item { param($LiteralPath) }
+
+        $configuration = Get-WpaPesterConfiguration -Path (Join-Path $root 'tests')
+
+        $configuration.TestRegistry.Enabled.Value | Should -BeFalse
+        Assert-MockCalled New-Item -Times 1 -Exactly
+        Assert-MockCalled Remove-Item -Times 0 -Exactly
     }
 }
