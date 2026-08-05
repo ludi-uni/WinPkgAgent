@@ -34,3 +34,11 @@ The focused Pester run emitted the managed-environment `Get-CimInstance: access 
   - `& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -Command "Import-Module './.tools/Pester/5.6.1/Pester.psd1'; . './tests/PesterConfiguration.ps1'; $config=Get-WpaPesterConfiguration -Path @('./tests/Unit/ImportSideEffects.Tests.ps1','./tests/Unit/Workspace.Tests.ps1') -DisableRegistry; Invoke-Pester -Configuration $config"`
 - Result: Pester 5.6.1, 6 passed, 0 failed, 0 skipped; TestRegistry disabled. Coverage again emitted `Get-CimInstance: access denied` but the command exited 0.
 - Traversal and reparse tests remained unchanged and passed.
+
+## Review round 2 validation
+
+- The measured probe imports the actual `WinPkgAgent.psm1` loader content and its `Private`/`Public` trees from a `TestDrive` copy. The probe module defines module-scope `Get-Command` and `WpaProcessFactory` sentinels before executing the loader; either seam throws immediately if invoked, and `InModuleScope WinPkgAgent` asserts both counters remain zero.
+- The fixture snapshot now walks the fixture root and all descendants, records relative file hashes, and records reparse-point paths. The test asserts the before/after snapshot is identical and that the observed fixture has zero reparse points.
+- Exact command:
+  - `& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -Command "Import-Module './.tools/Pester/5.6.1/Pester.psd1'; . './tests/PesterConfiguration.ps1'; $config=Get-WpaPesterConfiguration -Path @('./tests/Unit/ImportSideEffects.Tests.ps1','./tests/Unit/Workspace.Tests.ps1') -DisableRegistry; Invoke-Pester -Configuration $config"`
+- Result: Pester 5.6.1, 6 passed, 0 failed, 0 skipped; TestRegistry disabled. Coverage emitted the managed-environment `Get-CimInstance: access denied` warning, but the command exited 0.
