@@ -7,6 +7,20 @@ Describe 'inventory aggregation' {
     It 'reports winget-only success as partial' { InModuleScope WinPkgAgent { $r=Get-WpaInventoryAggregate -Adapters @{winget={ [pscustomobject]@{Success=$true;Packages=@();Warning=$null} }}; $r.status | Should -Be 'partial'; $r.managers.Count | Should -Be 2 } }
     It 'reports scoop-only success as partial' { InModuleScope WinPkgAgent { $r=Get-WpaInventoryAggregate -Adapters @{scoop={ [pscustomobject]@{Success=$true;Packages=@();Warning=$null} }}; $r.status | Should -Be 'partial' } }
     It 'reports both successful managers as success' { InModuleScope WinPkgAgent { $r=Get-WpaInventoryAggregate -Adapters @{winget={ [pscustomobject]@{Success=$true;Packages=@();Warning=$null} };scoop={ [pscustomobject]@{Success=$true;Packages=@();Warning=$null} }}; $r.status | Should -Be 'success' } }
+    It 'keeps both successful managers successful when fingerprints are unavailable' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\manager.exe' }
+            Mock Get-WpaManagerFingerprint { throw 'fingerprint unavailable' }
+            $r=Get-WpaInventoryAggregate -Adapters @{
+                winget={ [pscustomobject]@{Success=$true;Packages=@();Warning=$null} }
+                scoop={ [pscustomobject]@{Success=$true;Packages=@();Warning=$null} }
+            }
+            $r.status | Should -Be 'success'
+            @($r.managers | Where-Object warning).Count | Should -Be 2
+            $r.warnings | Should -HaveCount 2
+            $r.warnings | Should -Match 'fingerprint unavailable'
+        }
+    }
     It 'retains timeout warning and successful packages' { InModuleScope WinPkgAgent { $r=Get-WpaInventoryAggregate -Adapters @{winget={ [pscustomobject]@{Success=$true;Packages=@([pscustomobject]@{Id='ok'});Warning=$null} };scoop={ [pscustomobject]@{Success=$false;TimedOut=$true;Packages=@();Warning='timeout'} }}; $r.status | Should -Be 'partial'; $r.packages.Count | Should -Be 1; $r.warnings | Should -Contain 'timeout' } }
     It 'preserves successful inventory when fingerprint resolution fails' {
         InModuleScope WinPkgAgent {
