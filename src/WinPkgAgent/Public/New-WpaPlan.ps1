@@ -9,8 +9,11 @@ function New-WpaPlan {
     if(-not $MarkdownPath){$MarkdownPath=[IO.Path]::ChangeExtension($OutputPath,'.md')}
     $policy=Read-WpaPolicyFile $PolicyPath; Test-WpaDataSchema $policy policy | Out-Null
     $inventory=ConvertTo-WpaInventoryBoundary (Read-WpaJsonFile $InventoryPath); Test-WpaDataSchema $inventory inventory | Out-Null
-    foreach($manager in @($inventory.managers)){
-        Assert-WpaManagerFingerprintEvidence -Manager ([string](Get-WpaPropertyValue $manager 'manager')) -Fingerprint (Get-WpaPropertyValue $manager 'fingerprint') | Out-Null
+    $declaredManagers=@($manifest.packages | ForEach-Object { [string](Get-WpaPropertyValue $_ 'manager') } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    foreach($manager in $declaredManagers){
+        $inventoryManager=@($inventory.managers | Where-Object { (Get-WpaPropertyValue $_ 'manager') -eq $manager } | Select-Object -First 1)
+        if($inventoryManager.Count -eq 0){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $manager"}
+        Assert-WpaManagerFingerprintEvidence -Manager $manager -Fingerprint (Get-WpaPropertyValue $inventoryManager[0] 'fingerprint') | Out-Null
     }
     $evaluation=Get-WpaPlanEvaluation -Manifest $manifest -Policy $policy -Inventory $inventory
     $expires=$Now.AddMinutes([int]$policy.approvalValidityMinutes)

@@ -1,3 +1,33 @@
+function Test-WpaVerifiedExecutablePath {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    if(-not [IO.Path]::IsPathFullyQualified($Path)){return $false}
+    try {
+        $item=Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){return $false}
+        $cursor=$item
+        while($null -ne $cursor){
+            $parent=[IO.Path]::GetDirectoryName($cursor.FullName)
+            if([string]::IsNullOrEmpty($parent) -or $parent -eq $cursor.FullName){break}
+            $cursor=Get-Item -LiteralPath $parent -Force -ErrorAction Stop
+            if(($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){return $false}
+        }
+        return $true
+    } catch { return $false }
+}
+
+function Test-WpaWindowsAppsAlias {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    if([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)){return $false}
+    try {
+        $alias=[IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\winget.exe'))
+        return [string]::Equals([IO.Path]::GetFullPath($Path),$alias,[StringComparison]::OrdinalIgnoreCase)
+    } catch { return $false }
+}
+
 function Resolve-WpaManagerExecutable {
     [CmdletBinding()]
     param(
@@ -9,7 +39,7 @@ function Resolve-WpaManagerExecutable {
         $path = Get-WpaPropertyValue $command 'Path'
         if([string]::IsNullOrWhiteSpace([string]$path)){$path = Get-WpaPropertyValue $command 'Source'}
         $path = if($null -ne $path){[string]$path}else{$null}
-        if($path -and [System.IO.Path]::IsPathFullyQualified($path) -and (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)){return [IO.Path]::GetFullPath($path)}
+        if($path -and -not ($Manager -eq 'winget' -and (Test-WpaWindowsAppsAlias -Path $path)) -and (Test-WpaVerifiedExecutablePath -Path $path)){return [IO.Path]::GetFullPath($path)}
     }
 
     $candidates = [System.Collections.Generic.List[string]]::new()
@@ -17,10 +47,14 @@ function Resolve-WpaManagerExecutable {
         $candidates.Add((Join-Path $env:USERPROFILE 'scoop\shims\scoop.cmd'))
     }
     if($Manager -eq 'winget') {
-        if($env:LOCALAPPDATA) {$candidates.Add((Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\winget.exe'))}
+        $packages=@(try { Get-AppxPackage -Name 'Microsoft.DesktopAppInstaller' -ErrorAction Stop } catch { @() })
+        if($packages.Count -ne 1){return $null}
+        $installLocation=[string](Get-WpaPropertyValue $packages[0] 'InstallLocation')
+        if([string]::IsNullOrWhiteSpace($installLocation) -or -not [IO.Path]::IsPathFullyQualified($installLocation)){return $null}
+        try {$candidates.Add((Join-Path $installLocation 'winget.exe'))} catch {return $null}
     }
     foreach($candidate in $candidates | Select-Object -Unique) {
-        if([System.IO.Path]::IsPathFullyQualified($candidate) -and (Test-Path -LiteralPath $candidate -PathType Leaf -ErrorAction SilentlyContinue)) {return [IO.Path]::GetFullPath($candidate)}
+        if((Test-WpaVerifiedExecutablePath -Path $candidate)) {return [IO.Path]::GetFullPath($candidate)}
     }
     return $null
 }

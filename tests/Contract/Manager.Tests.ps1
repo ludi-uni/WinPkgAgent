@@ -19,6 +19,48 @@ Describe 'manager contract parsers' {
         }
     }
 
+    It 'prefers the verified AppX executable over the WindowsApps alias' {
+        InModuleScope WinPkgAgent {
+            $installLocation = Join-Path $TestDrive 'Microsoft.DesktopAppInstaller'
+            [IO.Directory]::CreateDirectory($installLocation) | Out-Null
+            $wingetPath = Join-Path $installLocation 'winget.exe'
+            [IO.File]::WriteAllText($wingetPath, 'fixture')
+            $aliasPath = Join-Path $TestDrive 'Microsoft\WindowsApps\winget.exe'
+            [IO.Directory]::CreateDirectory((Split-Path $aliasPath -Parent)) | Out-Null
+            [IO.File]::WriteAllText($aliasPath, 'alias')
+            $oldLocalAppData = $env:LOCALAPPDATA
+            try {
+                $env:LOCALAPPDATA = $TestDrive
+                Mock Get-Command { [pscustomobject]@{ Path = $aliasPath } }
+                Mock Get-AppxPackage { @([pscustomobject]@{ Name='Microsoft.DesktopAppInstaller'; InstallLocation=$installLocation }) }
+                Resolve-WpaManagerExecutable -Manager winget | Should -Be ([IO.Path]::GetFullPath($wingetPath))
+            } finally {
+                $env:LOCALAPPDATA = $oldLocalAppData
+            }
+        }
+    }
+
+    It 'fails closed when AppX metadata is unavailable or ambiguous' {
+        InModuleScope WinPkgAgent {
+            Mock Get-Command { $null }
+            Mock Get-AppxPackage { @() }
+            Resolve-WpaManagerExecutable -Manager winget | Should -BeNullOrEmpty
+            Mock Get-AppxPackage { @(
+                [pscustomobject]@{ Name='Microsoft.DesktopAppInstaller'; InstallLocation='C:\\Program Files\\WindowsApps\\one' }
+                [pscustomobject]@{ Name='Microsoft.DesktopAppInstaller'; InstallLocation='C:\\Program Files\\WindowsApps\\two' }
+            ) }
+            Resolve-WpaManagerExecutable -Manager winget | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'fails closed when AppX InstallLocation is missing or unsafe' {
+        InModuleScope WinPkgAgent {
+            Mock Get-Command { $null }
+            Mock Get-AppxPackage { [pscustomobject]@{ Name='Microsoft.DesktopAppInstaller'; InstallLocation='relative-location' } }
+            Resolve-WpaManagerExecutable -Manager winget | Should -BeNullOrEmpty
+        }
+    }
+
     It 'falls back to Source when Path is whitespace' {
         InModuleScope WinPkgAgent {
             $path = Join-Path $TestDrive 'scoop.cmd'
@@ -31,7 +73,7 @@ Describe 'manager contract parsers' {
     It 'ignores command results with neither Path nor Source' {
         InModuleScope WinPkgAgent {
             Mock Get-Command { [pscustomobject]@{ Name = 'scoop' } }
-            Mock Test-Path { $false }
+            Mock Test-WpaVerifiedExecutablePath { $false }
             { Resolve-WpaManagerExecutable -Manager scoop } | Should -Not -Throw
             Resolve-WpaManagerExecutable -Manager scoop | Should -BeNullOrEmpty
         }
@@ -43,7 +85,7 @@ Describe 'manager contract parsers' {
             try {
                 $env:USERPROFILE = 'C:\Users\test'
                 Mock Get-Command { $null }
-                Mock Test-Path { param($LiteralPath) $LiteralPath -eq 'C:\Users\test\scoop\shims\scoop.cmd' }
+                Mock Test-WpaVerifiedExecutablePath { param($Path) $Path -eq 'C:\Users\test\scoop\shims\scoop.cmd' }
                 Resolve-WpaManagerExecutable -Manager scoop | Should -Be 'C:\Users\test\scoop\shims\scoop.cmd'
             } finally {
                 $env:USERPROFILE = $oldUserProfile

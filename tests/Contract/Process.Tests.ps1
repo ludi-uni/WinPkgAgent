@@ -1,5 +1,11 @@
 Describe 'Wpa process adapter contract' {
     BeforeAll { Import-Module "$PSScriptRoot/../../src/WinPkgAgent/WinPkgAgent.psd1" -Force }
+    It 'uses a StrictMode-safe production default when no fixture factory is configured' {
+        InModuleScope WinPkgAgent {
+            $script:WpaProcessFactory | Should -BeNullOrEmpty
+        }
+    }
+
     It 'preserves argument boundaries and exit metadata' {
         InModuleScope WinPkgAgent {
             $path = Join-Path $TestDrive 'fixture-manager.exe'
