@@ -25,3 +25,12 @@ Complete. The import-side-effect and workspace tests now use canonical path hand
 - Baseline reproduced the original failure at `ImportSideEffects.Tests.ps1:20`: `Substring` raised `ArgumentOutOfRangeException`.
 
 The focused Pester run emitted the managed-environment `Get-CimInstance: access denied` coverage warning, but returned exit code 0. The pre-existing untracked plan was preserved.
+
+## Review round 1 validation
+
+- Import measurement now snapshots PATH and a `TestDrive` fixture before the measured `Import-Module -Force` call.
+- `Get-Command` is explicitly mocked as the manager-resolution seam used by `Resolve-WpaManagerExecutable`; the import asserts exactly zero calls.
+- Exact command:
+  - `& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -Command "Import-Module './.tools/Pester/5.6.1/Pester.psd1'; . './tests/PesterConfiguration.ps1'; $config=Get-WpaPesterConfiguration -Path @('./tests/Unit/ImportSideEffects.Tests.ps1','./tests/Unit/Workspace.Tests.ps1') -DisableRegistry; Invoke-Pester -Configuration $config"`
+- Result: Pester 5.6.1, 6 passed, 0 failed, 0 skipped; TestRegistry disabled. Coverage again emitted `Get-CimInstance: access denied` but the command exited 0.
+- Traversal and reparse tests remained unchanged and passed.
