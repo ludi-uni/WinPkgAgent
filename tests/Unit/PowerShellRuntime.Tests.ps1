@@ -19,10 +19,17 @@ Describe 'PowerShell 7 runtime resolution' {
         It 'uses an absolute path and fixed no-profile arguments for the runtime probe' {
             $path=Join-Path $TestDrive 'pwsh.exe';[IO.File]::WriteAllText($path,'fixture')
             Mock Get-WpaPowerShellFileFingerprint { [pscustomobject]@{pathHash=('a'*64);fileSha256=('b'*64);fileLength=7;lastWriteTimeUtc='2026-01-01T00:00:00Z';signatureStatus='Valid';signerSubject='fixture';isReparsePoint=$false} }
-            Mock Invoke-WpaProcess { [pscustomobject]@{ExitCode=0;TimedOut=$false;StdOut='{"PSEdition":"Core","PSVersion":"7.4.0"}'}
+            Mock Invoke-WpaProcess { [pscustomobject]@{ExitCode=0;TimedOut=$false;StdOut='{"PSEdition":"Core","PSVersion":"7.4.0"}'} }
             $result=Test-WpaPowerShellExecutable -Path $path -Source configured
             $result.compatible | Should -BeTrue
             Should -Invoke Invoke-WpaProcess -ParameterFilter {$FilePath -eq [IO.Path]::GetFullPath($path) -and $Arguments -contains '-NoProfile' -and $Arguments -contains '-NonInteractive'} -Times 1 -Exactly
+        }
+
+        It 'accepts the structured PSVersion object returned by ConvertTo-Json' {
+            $path=Join-Path $TestDrive 'pwsh.exe';[IO.File]::WriteAllText($path,'fixture')
+            Mock Get-WpaPowerShellFileFingerprint { [pscustomobject]@{pathHash=('a'*64);fileSha256=('b'*64);fileLength=7;lastWriteTimeUtc='2026-01-01T00:00:00Z';signatureStatus='Valid';signerSubject='fixture';isReparsePoint=$false} }
+            Mock Invoke-WpaProcess { [pscustomobject]@{ExitCode=0;TimedOut=$false;StdOut='{"PSEdition":"Core","PSVersion":{"Major":7,"Minor":6,"Patch":3}}'} }
+            (Test-WpaPowerShellExecutable -Path $path -Source configured).compatible | Should -BeTrue
         }
 
         It 'does not expose the resolved path in environment output' {

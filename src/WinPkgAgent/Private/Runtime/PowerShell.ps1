@@ -11,7 +11,7 @@ function Get-WpaPowerShellFileFingerprint {
     $cursor=$item
     while($null -ne $cursor){
         if(($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'PowerShell executable path contains a reparse point.'}
-        $parent=Split-Path -LiteralPath $cursor.FullName -Parent
+        $parent=[IO.Path]::GetDirectoryName($cursor.FullName)
         if([string]::IsNullOrEmpty($parent) -or $parent -eq $cursor.FullName){break}
         $cursor=Get-Item -LiteralPath $parent -Force -ErrorAction Stop
     }
@@ -41,7 +41,13 @@ function Test-WpaPowerShellExecutable {
         if(-not $ProbeJson){$process=Invoke-WpaProcess -FilePath $Path -Arguments @('-NoLogo','-NoProfile','-NonInteractive','-Command','$PSVersionTable | ConvertTo-Json -Compress') -TimeoutSeconds 15;if($process.TimedOut){$base.reasonCode='POWERSHELL_PROBE_TIMEOUT';$base.reason='PowerShell runtime probe timed out.';return [pscustomobject]$base};if($process.ExitCode -ne 0){$base.reasonCode='POWERSHELL_PROBE_FAILED';$base.reason='PowerShell runtime probe failed.';return [pscustomobject]$base};$ProbeJson=$process.StdOut}
         try{$payload=$ProbeJson|ConvertFrom-Json -ErrorAction Stop}catch{$base.reasonCode='POWERSHELL_PROBE_INVALID_JSON';$base.reason='PowerShell runtime probe returned invalid JSON.';return [pscustomobject]$base}
     }
-    try{$version=[version]([string](Get-WpaPropertyValue $payload 'PSVersion' ''))}catch{$base.reasonCode=if($Source -eq 'configured'){'CONFIGURED_POWERSHELL_INVALID_VERSION'}else{'POWERSHELL_VERSION_TOO_OLD'};$base.reason='PowerShell runtime version was invalid.';return [pscustomobject]$base}
+    try {
+        $versionValue=Get-WpaPropertyValue $payload 'PSVersion' $null
+        if($versionValue -is [string]){$version=[version]$versionValue}
+        elseif($null -ne $versionValue -and $null -ne (Get-WpaPropertyValue $versionValue 'Major' $null)) {
+            $version=[version]::new([int](Get-WpaPropertyValue $versionValue 'Major' 0),[int](Get-WpaPropertyValue $versionValue 'Minor' 0),[int](Get-WpaPropertyValue $versionValue 'Patch' 0))
+        } else { throw 'PowerShell runtime version was missing.' }
+    } catch {$base.reasonCode=if($Source -eq 'configured'){'CONFIGURED_POWERSHELL_INVALID_VERSION'}else{'POWERSHELL_VERSION_TOO_OLD'};$base.reason='PowerShell runtime version was invalid.';return [pscustomobject]$base}
     $base.version=$version.ToString();$base.edition=[string](Get-WpaPropertyValue $payload 'PSEdition' '')
     if($base.edition -ne 'Core'){$base.reasonCode=if($Source -eq 'configured'){'CONFIGURED_POWERSHELL_INVALID_VERSION'}else{'POWERSHELL_EDITION_UNSUPPORTED'};$base.reason='Windows PowerShell Desktop is not supported; pwsh.exe with Core is required.';return [pscustomobject]$base}
     if($version -lt [version]'7.4.0'){$base.reasonCode=if($Source -eq 'configured'){'CONFIGURED_POWERSHELL_INVALID_VERSION'}else{'POWERSHELL_VERSION_TOO_OLD'};$base.reason='PowerShell 7.4 or newer is required.';return [pscustomobject]$base}

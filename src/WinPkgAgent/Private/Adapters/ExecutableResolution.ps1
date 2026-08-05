@@ -32,7 +32,7 @@ function Get-WpaManagerFingerprint {
     $cursor=$item
     while($null -ne $cursor){
         if(($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Manager executable path contains a reparse point.'}
-        $parent=Split-Path -LiteralPath $cursor.FullName -Parent
+        $parent=[IO.Path]::GetDirectoryName($cursor.FullName)
         if([string]::IsNullOrEmpty($parent) -or $parent -eq $cursor.FullName){break}
         $cursor=Get-Item -LiteralPath $parent -Force -ErrorAction Stop
     }
