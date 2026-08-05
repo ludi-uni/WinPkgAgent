@@ -97,6 +97,12 @@ Describe 'WinPkgAgent planning' {
             $markdown | Should -Match 'tool --version'
         }
 
+        It 'renders a plan when optional blocked operations are omitted' {
+            $plan=[pscustomobject]@{planId='p';expiresAt='2099-01-01T00:00:00Z';actions=@();warnings=@()}
+            { ConvertTo-WpaPlanMarkdown $plan } | Should -Not -Throw
+            (ConvertTo-WpaPlanMarkdown $plan) | Should -Match 'Blocked: 0'
+        }
+
         It 'blocks all mutations when the maximum operation count is exceeded' {
             $policy.maxOperations=1
             $manifest = [pscustomobject]@{ packages=@(
