@@ -28,3 +28,16 @@ Additional check: `git diff --check` passed.
 
 - Timestamp schema validation is structural ISO 8601 validation (date/time shape plus `Z` or numeric offset). No live package-manager or registry behavior is exercised by this focused run.
 - The pre-existing untracked plan file was preserved unchanged.
+
+## Review round 1 fixes
+
+- `src/WinPkgAgent/Private/Schema/DataFiles.ps1` now performs semantic ISO 8601 validation on the serialized JSON after JSON Schema validation. It validates real calendar dates, clock ranges, fractional timestamps, and numeric offset ranges without losing offsets to PowerShell `DateTime` coercion.
+- `tests/Unit/ResultSchema.Tests.ps1` now rejects `2026-02-30T00:00:00Z`, `2026-08-05T25:00:00Z`, `2026-08-05T23:60:00Z`, and `2026-08-05T23:59:59+99:99`; accepts `+09:30`, `-05:00`, and `+00:00`; and explicitly tests 63-, 64-, and 65-character hashes.
+- The CLI helper architecture remains unchanged.
+
+Exact review-round validation:
+
+- Bundled Pester 5.6.1, `tests/Unit/ResultSchema.Tests.ps1`, TestRegistry disabled: 14 passed, 0 failed.
+- Bundled Pester 5.6.1, Manifest/ResultSchema/CLI focused suite, TestRegistry disabled: 32 passed, 0 failed.
+- JSON parsing of all 8 repository schemas: 8 passed.
+- `git diff --check`: passed.

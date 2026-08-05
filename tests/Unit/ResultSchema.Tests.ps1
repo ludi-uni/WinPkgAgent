@@ -123,10 +123,42 @@ Describe 'WinPkgAgent apply and verify result schemas' {
             { Test-WpaDataSchema -Data $verifySample -SchemaName verify-result } | Should -Throw
         }
 
-        It 'rejects malformed SHA-256 hashes' {
+        It 'rejects impossible ISO 8601 calendar, time, and offset values' {
+            foreach ($timestamp in @(
+                '2026-02-30T00:00:00Z',
+                '2026-08-05T25:00:00Z',
+                '2026-08-05T23:60:00Z',
+                '2026-08-05T23:59:59+99:99'
+            )) {
+                $sample = $script:apply | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+                $sample.startedAt = $timestamp
+                { Test-WpaDataSchema -Data $sample -SchemaName apply-result } | Should -Throw
+            }
+        }
+
+        It 'accepts valid ISO 8601 offsets' {
             $sample = $script:apply | ConvertTo-Json -Depth 20 | ConvertFrom-Json
-            $sample.operations[0].stdoutHash = 'not-a-sha256'
-            { Test-WpaDataSchema -Data $sample -SchemaName apply-result } | Should -Throw
+            $sample.startedAt = '2026-08-05T12:34:56.1234567+09:30'
+            $sample.finishedAt = '2026-08-05T03:04:05-05:00'
+            Test-WpaDataSchema -Data $sample -SchemaName apply-result | Should -BeTrue
+
+            $verifySample = $script:verify | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $verifySample.verifiedAt = '2026-08-04T23:04:05+00:00'
+            Test-WpaDataSchema -Data $verifySample -SchemaName verify-result | Should -BeTrue
+        }
+
+        It 'enforces exact SHA-256 hash boundaries' {
+            $short = $script:apply | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $short.operations[0].stdoutHash = 'a' * 63
+            { Test-WpaDataSchema -Data $short -SchemaName apply-result } | Should -Throw
+
+            $valid = $script:apply | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $valid.operations[0].stdoutHash = 'a' * 64
+            Test-WpaDataSchema -Data $valid -SchemaName apply-result | Should -BeTrue
+
+            $long = $script:apply | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $long.operations[0].stdoutHash = 'a' * 65
+            { Test-WpaDataSchema -Data $long -SchemaName apply-result } | Should -Throw
         }
 
         It 'uses only the separate schemas at the runtime validation boundary' {
