@@ -109,10 +109,37 @@ Describe 'WinPkgAgent planning' {
         }
 
         It 'rejects incomplete inventory fingerprints while creating a plan' {
-            $manifest=[pscustomobject]@{packages=@()}
+            $manifest=[pscustomobject]@{packages=@([pscustomobject]@{name='tool';manager='scoop';id='tool';state='present';version='latest';source='main'})}
             $inventory=[pscustomobject]@{schemaVersion=1;environment=@{id='env'};status='success';managers=@([pscustomobject]@{manager='scoop';status='success';version='1';fingerprint=[pscustomobject]@{manager='scoop';signatureStatus='not-applicable';aclAssessment=$null}});packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
             Mock Read-WpaManifestResolved {$manifest};Mock Test-WpaManifestObject {$true};Mock Read-WpaPolicyFile {$policy};Mock Read-WpaJsonFile {$inventory};Mock Test-WpaDataSchema {$true}
             { New-WpaPlan -ManifestPath manifest.yaml -PolicyPath policy.yaml -InventoryPath inventory.json -OutputPath plan.json -WhatIf } | Should -Throw '*MANAGER_FINGERPRINT_UNAVAILABLE*'
+        }
+
+        It 'plans a winget action when an unrelated scoop fingerprint is untrusted' {
+            $manifest=[pscustomobject]@{packages=@([pscustomobject]@{name='vscode';manager='winget';id='Microsoft.VisualStudioCode';state='present';version='latest';source='winget'})}
+            $wingetFingerprint=[pscustomobject]@{manager='winget';signatureStatus='valid';aclAssessment='trusted'}
+            $scoopFingerprint=[pscustomobject]@{manager='scoop';signatureStatus='not-applicable';aclAssessment='unknown'}
+            $inventory=[pscustomobject]@{schemaVersion=1;environment=@{id='env'};status='success';managers=@(
+                [pscustomobject]@{manager='winget';status='success';version='1';fingerprint=$wingetFingerprint},
+                [pscustomobject]@{manager='scoop';status='unavailable';version=$null;fingerprint=$scoopFingerprint}
+            );packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
+            Mock Read-WpaManifestResolved {$manifest};Mock Test-WpaManifestObject {$true};Mock Read-WpaPolicyFile {$policy};Mock Read-WpaJsonFile {$inventory};Mock Test-WpaDataSchema {$true}
+            $plan=New-WpaPlan -ManifestPath manifest.yaml -PolicyPath policy.yaml -InventoryPath inventory.json -OutputPath plan.json -WhatIf
+            $plan.actions[0].manager | Should -Be 'winget'
+            $plan.actions[0].classification | Should -Be 'install'
+            @($plan.managerFingerprints).Count | Should -Be 2
+        }
+
+        It 'blocks a scoop action when the declared scoop fingerprint is untrusted' {
+            $manifest=[pscustomobject]@{packages=@([pscustomobject]@{name='tool';manager='scoop';id='tool';state='present';version='latest';source='main'})}
+            $wingetFingerprint=[pscustomobject]@{manager='winget';signatureStatus='valid';aclAssessment='trusted'}
+            $scoopFingerprint=[pscustomobject]@{manager='scoop';signatureStatus='not-applicable';aclAssessment='unknown'}
+            $inventory=[pscustomobject]@{schemaVersion=1;environment=@{id='env'};status='success';managers=@(
+                [pscustomobject]@{manager='winget';status='success';version='1';fingerprint=$wingetFingerprint},
+                [pscustomobject]@{manager='scoop';status='unavailable';version=$null;fingerprint=$scoopFingerprint}
+            );packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
+            Mock Read-WpaManifestResolved {$manifest};Mock Test-WpaManifestObject {$true};Mock Read-WpaPolicyFile {$policy};Mock Read-WpaJsonFile {$inventory};Mock Test-WpaDataSchema {$true}
+            { New-WpaPlan -ManifestPath manifest.yaml -PolicyPath policy.yaml -InventoryPath inventory.json -OutputPath plan.json -WhatIf } | Should -Throw '*MANAGER_PATH_UNTRUSTED: scoop*'
         }
 
         It 'blocks all mutations when the maximum operation count is exceeded' {
