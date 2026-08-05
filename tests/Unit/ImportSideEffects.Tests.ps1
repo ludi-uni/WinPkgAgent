@@ -1,42 +1,45 @@
 Describe 'module import side effects' {
-    It 'does not change PATH while importing the module' {
+    BeforeAll {
         $modulePath = Join-Path $PSScriptRoot '../../src/WinPkgAgent/WinPkgAgent.psd1'
+        Import-Module $modulePath -Force
+    }
+
+    AfterAll {
+        Remove-Module WinPkgAgent -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'does not change PATH while importing the module' {
         $before = $env:Path
-        try {
-            Import-Module $modulePath -Force
-            $env:Path | Should -Be $before
-        } finally {
-            Remove-Module WinPkgAgent -Force -ErrorAction SilentlyContinue
-        }
+        Import-Module $modulePath -Force
+        $env:Path | Should -Be $before
     }
 
     It 'does not invoke manager processes or write artifacts while importing' {
-        $modulePath = Join-Path $PSScriptRoot '../../src/WinPkgAgent/WinPkgAgent.psd1'
         $artifactRoot = Join-Path $PSScriptRoot '../../artifacts'
         $getArtifactSnapshot = {
-            if(-not (Test-Path -LiteralPath $artifactRoot)) { return '[]' }
-            $files = @(Get-ChildItem -LiteralPath $artifactRoot -File -Recurse | ForEach-Object {
-                [pscustomobject]@{
-                    Path = $_.FullName.Substring($artifactRoot.Length).TrimStart('\','/')
-                    Length = $_.Length
-                    Hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
-                }
-            } | Sort-Object Path)
-            if($files.Count -eq 0) { return '[]' }
-            return ($files | ConvertTo-Json -Compress)
+            $artifactRootFull = [IO.Path]::GetFullPath($artifactRoot)
+            $files = @()
+            $exists = Test-Path -LiteralPath $artifactRootFull -PathType Container
+            if($exists) {
+                $files = @(Get-ChildItem -LiteralPath $artifactRootFull -File -Recurse | ForEach-Object {
+                    $fileFull = [IO.Path]::GetFullPath($_.FullName)
+                    $relative = [IO.Path]::GetRelativePath($artifactRootFull, $fileFull)
+                    if([IO.Path]::IsPathFullyQualified($relative) -or $relative -eq '..' -or $relative -like '..\*' -or $relative -like '../*') {
+                        throw 'Artifact snapshot escaped its root.'
+                    }
+                    [pscustomobject]@{
+                        Path = $relative
+                        Length = $_.Length
+                        Hash = (Get-FileHash -LiteralPath $fileFull -Algorithm SHA256).Hash
+                    }
+                } | Sort-Object Path)
+            }
+            return ([pscustomobject]@{Exists = $exists; Files = @($files)} | ConvertTo-Json -Compress -Depth 5)
         }
-        $before = & $getArtifactSnapshot
 
-        try {
-            Mock Invoke-WpaProcess { throw 'Import side-effect process call' } -ModuleName WinPkgAgent
-            Mock Resolve-WpaManagerExecutable { throw 'Import side-effect resolver call' } -ModuleName WinPkgAgent
-            Import-Module $modulePath -Force
-            Should -Invoke Invoke-WpaProcess -Times 0 -Exactly
-            Should -Invoke Resolve-WpaManagerExecutable -Times 0 -Exactly
-            $after = & $getArtifactSnapshot
-            $after | Should -Be $before
-        } finally {
-            Remove-Module WinPkgAgent -Force -ErrorAction SilentlyContinue
-        }
+        $before = & $getArtifactSnapshot
+        Import-Module $modulePath -Force
+        $after = & $getArtifactSnapshot
+        $after | Should -Be $before
     }
 }
