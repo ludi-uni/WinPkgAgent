@@ -3,13 +3,28 @@ function Invoke-WpaProcess {
     param(
         [Parameter(Mandatory)][string]$FilePath,
         [string[]]$Arguments = @(),
-        [ValidateRange(1,3600)][int]$TimeoutSeconds = 30
+        [ValidateRange(1,3600)][int]$TimeoutSeconds = 30,
+        [scriptblock]$ProcessRunner
     )
     if ([string]::IsNullOrWhiteSpace($FilePath)) {
         throw [System.ArgumentException]::new('FilePath is required.')
     }
     if (-not [IO.Path]::IsPathFullyQualified($FilePath)) {
         throw [System.ArgumentException]::new('FilePath must be a fully-qualified path.')
+    }
+
+    if ($null -ne $ProcessRunner) {
+        $injected = & $ProcessRunner -FilePath $FilePath -Arguments @($Arguments) -TimeoutSeconds $TimeoutSeconds
+        return [pscustomobject]@{
+            Executable = $FilePath
+            Arguments = @($Arguments)
+            ExitCode = Get-WpaPropertyValue $injected 'ExitCode'
+            StdOut = Protect-WpaSensitiveText (Get-WpaPropertyValue $injected 'StdOut' '')
+            StdErr = Protect-WpaSensitiveText (Get-WpaPropertyValue $injected 'StdErr' '')
+            DurationMs = [Math]::Max(0, [int](Get-WpaPropertyValue $injected 'DurationMs' 0))
+            TimedOut = [bool](Get-WpaPropertyValue $injected 'TimedOut' $false)
+            Started = [bool](Get-WpaPropertyValue $injected 'Started' $true)
+        }
     }
 
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
