@@ -13,7 +13,7 @@ function Get-WpaInventoryAggregate {
         $managerStatus=if($adapterSuccess){if($adapterStatus -eq 'partial'){'partial'}else{'success'}}else{'failed'}
         $managerWarning=Protect-WpaSensitiveText (Get-WpaPropertyValue $r 'Warning');$managerPackages=@(Get-WpaPropertyValue $r 'Packages' @())
         $fingerprint=$null
-        try {$executable=Get-WpaPropertyValue $r 'Executable' (Resolve-WpaManagerExecutable -Manager $name);if($executable){$fingerprint=Get-WpaManagerFingerprint -Manager $name -Executable $executable}} catch {$managerWarning=if($managerWarning){$managerWarning}else{Protect-WpaSensitiveText $_.Exception.Message};$managerStatus='failed'}
+        try {$executable=Get-WpaPropertyValue $r 'Executable' (Resolve-WpaManagerExecutable -Manager $name);if($executable){$fingerprint=Get-WpaManagerFingerprint -Manager $name -Executable $executable}} catch {$managerWarning=if($managerWarning){$managerWarning}else{Protect-WpaSensitiveText $_.Exception.Message}}
         $managers += [pscustomobject]@{manager=$name;version=(Get-WpaPropertyValue $r 'version');status=$managerStatus;timedOut=[bool](Get-WpaPropertyValue $r 'TimedOut' $false);warning=$managerWarning;fingerprint=$fingerprint}
         if($managerPackages.Count -gt 0){$packages += $managerPackages}
         if($managerWarning){$warnings += [string]$managerWarning}
