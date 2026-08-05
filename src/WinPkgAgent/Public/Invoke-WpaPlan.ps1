@@ -18,18 +18,20 @@ function Invoke-WpaPlan {
     $policy=Read-WpaPolicyFile $PolicyPath;Test-WpaDataSchema $policy policy|Out-Null
     if((Get-WpaObjectHash $policy) -ne $plan.policyHash){throw 'Policy changed after plan creation.'}
     $currentInventory=ConvertTo-WpaInventoryBoundary (Get-WpaInventory)
-    foreach($snapshot in @($plan.managerFingerprints | Where-Object { $null -ne $_ })){
-        $current=@($currentInventory.managers | Where-Object manager -eq $snapshot.manager | Select-Object -First 1).fingerprint
-        if($null -eq $snapshot.fingerprint -or $null -eq $current){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $($snapshot.manager)"}
-        $snapshotSignatureStatus=[string]$snapshot.fingerprint.signatureStatus
-        $currentSignatureStatus=[string]$current.signatureStatus
-        if([string]::IsNullOrEmpty($snapshotSignatureStatus) -or [string]::IsNullOrEmpty($currentSignatureStatus) -or $snapshotSignatureStatus -in @('unknown','unavailable','MANAGER_FINGERPRINT_UNAVAILABLE') -or $currentSignatureStatus -in @('unknown','unavailable','MANAGER_FINGERPRINT_UNAVAILABLE')){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $($snapshot.manager)"}
-        if($snapshotSignatureStatus -in @('NotSigned','Unknown','HashMismatch','NotTrusted','Invalid') -or $currentSignatureStatus -in @('NotSigned','Unknown','HashMismatch','NotTrusted','Invalid')){throw "MANAGER_SIGNATURE_INVALID: $($snapshot.manager)"}
-        if($current.aclAssessment -ne 'trusted' -and $current.aclAssessment -notlike 'trusted;*'){throw "MANAGER_PATH_UNTRUSTED: $($snapshot.manager)"}
-        if((Get-WpaObjectHash $snapshot.fingerprint) -ne (Get-WpaObjectHash $current)){throw "MANAGER_EXECUTABLE_CHANGED: $($snapshot.manager)"}
+    $operations=@($plan.actions|Where-Object classification -in @('install','upgrade'))
+    $relevantManagers=@($operations | ForEach-Object { [string](Get-WpaPropertyValue $_ 'manager') } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    foreach($manager in $relevantManagers){
+        $snapshot=@($plan.managerFingerprints | Where-Object { (Get-WpaPropertyValue $_ 'manager') -eq $manager } | Select-Object -First 1)
+        if($snapshot.Count -eq 0){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $manager"}
+        $snapshotFingerprint=Get-WpaPropertyValue $snapshot[0] 'fingerprint'
+        Assert-WpaManagerFingerprintEvidence -Manager $manager -Fingerprint $snapshotFingerprint | Out-Null
+        $currentManager=@($currentInventory.managers | Where-Object { (Get-WpaPropertyValue $_ 'manager') -eq $manager } | Select-Object -First 1)
+        if($currentManager.Count -eq 0){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $manager"}
+        $currentFingerprint=Get-WpaPropertyValue $currentManager[0] 'fingerprint'
+        Assert-WpaManagerFingerprintEvidence -Manager $manager -Fingerprint $currentFingerprint | Out-Null
+        if((Get-WpaObjectHash $snapshotFingerprint) -ne (Get-WpaObjectHash $currentFingerprint)){throw "MANAGER_EXECUTABLE_CHANGED: $manager"}
     }
     if((Get-WpaInventoryStateHash $currentInventory) -ne $plan.inventoryHash){throw 'Inventory state changed after plan creation.'}
-    $operations=@($plan.actions|Where-Object classification -in @('install','upgrade'))
     if($operations.Count -gt $policy.maxOperations){throw 'Plan exceeds the current maximum operation count.'}
     foreach($operation in $operations){if($operation.operation -notin @('install','upgrade')){throw 'Plan contains an unsupported operation.'}}
     if($PSCmdlet.ParameterSetName -eq 'Preflight'){

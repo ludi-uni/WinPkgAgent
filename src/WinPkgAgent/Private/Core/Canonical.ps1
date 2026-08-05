@@ -107,3 +107,19 @@ function ConvertTo-WpaInventoryBoundary {
     $normalized['warnings']=@((Get-WpaPropertyValue $Inventory 'warnings' @()))
     return [pscustomobject]$normalized
 }
+
+function Assert-WpaManagerFingerprintEvidence {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Manager,
+        [AllowNull()][object]$Fingerprint
+    )
+
+    if($null -eq $Fingerprint){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $Manager"}
+    $signatureStatus=[string](Get-WpaPropertyValue $Fingerprint 'signatureStatus')
+    $aclAssessment=[string](Get-WpaPropertyValue $Fingerprint 'aclAssessment')
+    if([string]::IsNullOrWhiteSpace($signatureStatus) -or [string]::IsNullOrWhiteSpace($aclAssessment) -or $signatureStatus -in @('unknown','unavailable','MANAGER_FINGERPRINT_UNAVAILABLE')){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $Manager"}
+    if($signatureStatus -in @('NotSigned','Unknown','HashMismatch','NotTrusted','Invalid')){throw "MANAGER_SIGNATURE_INVALID: $Manager"}
+    if($aclAssessment -ne 'trusted' -and $aclAssessment -notlike 'trusted;*'){throw "MANAGER_PATH_UNTRUSTED: $Manager"}
+    return $true
+}

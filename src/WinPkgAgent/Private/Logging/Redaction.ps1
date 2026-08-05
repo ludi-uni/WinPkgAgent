@@ -1,6 +1,6 @@
 function Protect-WpaSensitiveText {
     [CmdletBinding()]
-    param([AllowNull()][string]$Text)
+    param([AllowNull()][string]$Text,[switch]$NoTruncate)
     if ($null -eq $Text) { return $null }
     # Remove terminal control sequences before persisting any diagnostic text.
     $result = $Text -replace "`e\[[0-?]*[ -/]*[@-~]", ''
@@ -12,7 +12,7 @@ function Protect-WpaSensitiveText {
     $result = $result -replace '(?i)\b([A-Z]:\\Users\\)[^\\\s"''<>|]+', '$1[USER_PROFILE]'
     $result = $result -replace '(?i)\b[A-Z]:\\[^\r\n\t"''<>|]+', '[REDACTED_PATH]'
     $result = $result -replace '(?i)\\\\[^\\\s]+\\[^\s"''<>|]+', '[REDACTED_PATH]'
-    if($result.Length -gt 4096){$result=$result.Substring(0,4096)}
+    if(-not $NoTruncate -and $result.Length -gt 4096){$result=$result.Substring(0,4096)}
     return $result
 }
 
@@ -30,8 +30,8 @@ function ConvertTo-WpaDiagnosticText {
     [CmdletBinding()]
     param([AllowNull()][string]$StdOut,[AllowNull()][string]$StdErr)
     $parts=@()
-    if(-not [string]::IsNullOrEmpty($StdOut)){$parts+='stdout: '+(Protect-WpaSensitiveText $StdOut)}
-    if(-not [string]::IsNullOrEmpty($StdErr)){$parts+='stderr: '+(Protect-WpaSensitiveText $StdErr)}
+    if(-not [string]::IsNullOrEmpty($StdOut)){$parts+='stdout: '+(Protect-WpaSensitiveText $StdOut -NoTruncate)}
+    if(-not [string]::IsNullOrEmpty($StdErr)){$parts+='stderr: '+(Protect-WpaSensitiveText $StdErr -NoTruncate)}
     $text=$parts -join [Environment]::NewLine
     $truncated=$text.Length -gt 4096
     if($truncated){$text=$text.Substring(0,4096)}

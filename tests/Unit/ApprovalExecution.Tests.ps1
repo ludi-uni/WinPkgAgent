@@ -3,6 +3,17 @@ Import-Module $modulePath -Force
 
 Describe 'WinPkgAgent plan approval and execution gates' {
     InModuleScope WinPkgAgent {
+        BeforeEach {
+            $script:fingerprint=[pscustomobject]@{manager='scoop';pathHash=('a'*64);fileSha256=('b'*64);fileVersion=$null;lastWriteTimeUtc='2026-01-01T00:00:00Z';fileLength=1;isReparsePoint=$false;signatureStatus='not-applicable';signerSubject=$null;aclAssessment='trusted'}
+            $script:policy=[pscustomobject]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch','minor');allowUninstall=$false;allowedManagers=@('winget','scoop');allowedSources=@('winget','main');protectedPackages=@();dangerousCategories=@('driver');requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=600;rebootHandling='record-only';unknownVersionHandling='block'}
+            $script:inventory=[pscustomobject]@{schemaVersion=1;environment=@{id='env'};status='success';managers=@(@{manager='scoop';status='success';version='1';fingerprint=$script:fingerprint});packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
+            $script:action=[pscustomobject]@{name='tool';manager='scoop';id='tool';source='main';classification='install';operation='install';reasonCode='PACKAGE_NOT_INSTALLED';reason='missing';risk='low';targetVersion=$null;verification=$null}
+            $script:plan=[pscustomobject][ordered]@{schemaVersion=1;toolVersion='0.1.0';planId=[guid]::NewGuid().ToString();createdAt='2026-01-01T00:00:00Z';expiresAt='2099-01-01T00:00:00Z';environmentId='env';manifestHash=('a'*64);policyHash=(Get-WpaObjectHash $script:policy);inventoryHash=(Get-WpaInventoryStateHash $script:inventory);managerFingerprints=@([pscustomobject]@{manager='scoop';fingerprint=$script:fingerprint});actions=@($script:action);blockedOperations=@();warnings=@();contentHash=$null;planHash=$null}
+            $script:plan.contentHash=Get-WpaObjectHash (Get-WpaPlanContent $script:plan);$script:plan.planHash=Get-WpaObjectHash (Get-WpaPlanHashInput $script:plan)
+            $script:approval=[pscustomobject]@{schemaVersion=1;planId=$script:plan.planId;planHash=$script:plan.planHash;approvedAt='2026-01-01T00:00:00Z';expiresAt='2099-01-01T00:00:00Z'}
+            Mock Read-WpaJsonFile {if($Path -eq 'plan.json'){$script:plan}else{$script:approval}};Mock Test-WpaDataSchema {$true};Mock Get-WpaEnvironmentId {'env'};Mock Read-WpaPolicyFile {$script:policy};Mock Get-WpaInventory {$script:inventory}
+        }
+
         It 'rejects a tampered plan hash' {
             $plan = [pscustomobject]@{ schemaVersion=1; planId='p'; contentHash='c'; planHash='bad'; actions=@() }
             { Assert-WpaPlanIntegrity -Plan $plan } | Should -Throw
@@ -27,7 +38,7 @@ Describe 'WinPkgAgent plan approval and execution gates' {
 
         It 'runs zero mutating adapter calls under WhatIf' {
             $action=[pscustomobject]@{name='tool';manager='scoop';id='tool';source='main';classification='install';operation='install';reasonCode='PACKAGE_NOT_INSTALLED';reason='missing';risk='low';targetVersion=$null;verification=$null}
-            $plan=[pscustomobject][ordered]@{schemaVersion=1;toolVersion='0.1.0';planId=[guid]::NewGuid().ToString();createdAt='2026-01-01T00:00:00Z';expiresAt='2099-01-01T00:00:00Z';environmentId='env';manifestHash=('a'*64);policyHash=$null;inventoryHash=$null;actions=@($action);blockedOperations=@();warnings=@();contentHash=$null;planHash=$null}
+            $plan=[pscustomobject][ordered]@{schemaVersion=1;toolVersion='0.1.0';planId=[guid]::NewGuid().ToString();createdAt='2026-01-01T00:00:00Z';expiresAt='2099-01-01T00:00:00Z';environmentId='env';manifestHash=('a'*64);policyHash=$null;inventoryHash=$null;managerFingerprints=@();actions=@($action);blockedOperations=@();warnings=@();contentHash=$null;planHash=$null}
             $policy=[pscustomobject]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch','minor');allowUninstall=$false;allowedManagers=@('winget','scoop');allowedSources=@('winget','main');protectedPackages=@();dangerousCategories=@('driver');requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=600;rebootHandling='record-only';unknownVersionHandling='block'}
             $fingerprint=[pscustomobject]@{manager='scoop';pathHash=('a'*64);fileSha256=('b'*64);fileVersion=$null;lastWriteTimeUtc='2026-01-01T00:00:00Z';fileLength=1;isReparsePoint=$false;signatureStatus='not-applicable';signerSubject=$null;aclAssessment='trusted'}
             $inventory=[pscustomobject]@{schemaVersion=1;environment=@{id='env'};status='success';managers=@(@{manager='scoop';status='success';version='1';fingerprint=$fingerprint});packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
@@ -53,8 +64,8 @@ Describe 'WinPkgAgent plan approval and execution gates' {
             $command = Get-Command Invoke-WpaPlan
             $command.ParameterSets.Name | Should -Contain 'Apply'
             $command.ParameterSets.Name | Should -Contain 'Preflight'
-            $command.ParameterSets['Apply'].Parameters.Name | Should -Contain 'ApprovalPath'
-            $command.ParameterSets['Preflight'].Parameters.Name | Should -Not -Contain 'ApprovalPath'
+            ($command.ParameterSets | Where-Object Name -eq 'Apply' | Select-Object -First 1).Parameters.Name | Should -Contain 'ApprovalPath'
+            ($command.ParameterSets | Where-Object Name -eq 'Preflight' | Select-Object -First 1).Parameters.Name | Should -Not -Contain 'ApprovalPath'
         }
 
         It 'does not allow normal Apply without an approval path' {
@@ -74,6 +85,22 @@ Describe 'WinPkgAgent plan approval and execution gates' {
             $fingerprint=[pscustomobject]@{manager='scoop';pathHash=('a'*64);fileSha256=('b'*64);fileVersion=$null;lastWriteTimeUtc='2026-01-01T00:00:00Z';fileLength=1;isReparsePoint=$false;signatureStatus='not-applicable';signerSubject=$null;aclAssessment='trusted'}
             $inventory.managers[0].fingerprint=$fingerprint;$plan.inventoryHash=Get-WpaInventoryStateHash $inventory;$plan.managerFingerprints=@([pscustomobject]@{manager='scoop';fingerprint=$fingerprint});$plan.contentHash=Get-WpaObjectHash (Get-WpaPlanContent $plan);$plan.planHash=Get-WpaObjectHash (Get-WpaPlanHashInput $plan);$approval.planHash=$plan.planHash
             $inventory.managers[0].fingerprint=$null;Mock Get-WpaInventory {$inventory.PSObject.Copy()};Mock Invoke-WpaManagerAction {throw 'must not run'}
+            { Invoke-WpaPlan -PlanPath plan.json -ApprovalPath approval.json -PolicyPath policy.yaml -OutputPath $null -VerifyOutputPath $null -SummaryPath $null -Confirm:$false } | Should -Throw '*MANAGER_FINGERPRINT_UNAVAILABLE*'
+            Should -Invoke Invoke-WpaManagerAction -Times 0 -Exactly
+        }
+
+        It 'rejects an incomplete plan fingerprint before mutation' {
+            $script:plan.managerFingerprints=@([pscustomobject]@{manager='scoop';fingerprint=[pscustomobject]@{manager='scoop';signatureStatus='not-applicable';aclAssessment=$null}})
+            $script:plan.contentHash=Get-WpaObjectHash (Get-WpaPlanContent $script:plan);$script:plan.planHash=Get-WpaObjectHash (Get-WpaPlanHashInput $script:plan);$script:approval.planHash=$script:plan.planHash
+            Mock Read-WpaJsonFile {if($Path -eq 'plan.json'){$script:plan}else{$script:approval}};Mock Test-WpaDataSchema {$true};Mock Get-WpaEnvironmentId {'env'};Mock Read-WpaPolicyFile {$script:policy};Mock Get-WpaInventory {$script:inventory};Mock Invoke-WpaManagerAction {throw 'must not run'}
+            { Invoke-WpaPlan -PlanPath plan.json -ApprovalPath approval.json -PolicyPath policy.yaml -OutputPath $null -VerifyOutputPath $null -SummaryPath $null -Confirm:$false } | Should -Throw '*MANAGER_FINGERPRINT_UNAVAILABLE*'
+            Should -Invoke Invoke-WpaManagerAction -Times 0 -Exactly
+        }
+
+        It 'rejects a plan with no fingerprint for an operation manager' {
+            $script:plan.managerFingerprints=@()
+            $script:plan.contentHash=Get-WpaObjectHash (Get-WpaPlanContent $script:plan);$script:plan.planHash=Get-WpaObjectHash (Get-WpaPlanHashInput $script:plan);$script:approval.planHash=$script:plan.planHash
+            Mock Read-WpaJsonFile {if($Path -eq 'plan.json'){$script:plan}else{$script:approval}};Mock Test-WpaDataSchema {$true};Mock Get-WpaEnvironmentId {'env'};Mock Read-WpaPolicyFile {$script:policy};Mock Get-WpaInventory {$script:inventory};Mock Invoke-WpaManagerAction {throw 'must not run'}
             { Invoke-WpaPlan -PlanPath plan.json -ApprovalPath approval.json -PolicyPath policy.yaml -OutputPath $null -VerifyOutputPath $null -SummaryPath $null -Confirm:$false } | Should -Throw '*MANAGER_FINGERPRINT_UNAVAILABLE*'
             Should -Invoke Invoke-WpaManagerAction -Times 0 -Exactly
         }

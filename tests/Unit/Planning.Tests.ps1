@@ -103,6 +103,18 @@ Describe 'WinPkgAgent planning' {
             (ConvertTo-WpaPlanMarkdown $plan) | Should -Match 'Blocked: 0'
         }
 
+        It 'renders incomplete action fixtures without optional property exceptions' {
+            $plan=[pscustomobject]@{planId='p';expiresAt='2099-01-01T00:00:00Z';actions=@([pscustomobject]@{name='tool';manager='scoop';id='tool';classification='unknown';reasonCode='UNKNOWN_PACKAGE';risk='low'});warnings=@()}
+            { ConvertTo-WpaPlanMarkdown $plan } | Should -Not -Throw
+        }
+
+        It 'rejects incomplete inventory fingerprints while creating a plan' {
+            $manifest=[pscustomobject]@{packages=@()}
+            $inventory=[pscustomobject]@{schemaVersion=1;environment=@{id='env'};status='success';managers=@([pscustomobject]@{manager='scoop';status='success';version='1';fingerprint=[pscustomobject]@{manager='scoop';signatureStatus='not-applicable';aclAssessment=$null}});packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
+            Mock Read-WpaManifestResolved {$manifest};Mock Test-WpaManifestObject {$true};Mock Read-WpaPolicyFile {$policy};Mock Read-WpaJsonFile {$inventory};Mock Test-WpaDataSchema {$true}
+            { New-WpaPlan -ManifestPath manifest.yaml -PolicyPath policy.yaml -InventoryPath inventory.json -OutputPath plan.json -WhatIf } | Should -Throw '*MANAGER_FINGERPRINT_UNAVAILABLE*'
+        }
+
         It 'blocks all mutations when the maximum operation count is exceeded' {
             $policy.maxOperations=1
             $manifest = [pscustomobject]@{ packages=@(
