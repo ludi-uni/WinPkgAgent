@@ -69,6 +69,10 @@ function Get-WpaInventoryStateHash {
     [CmdletBinding()]
     param([Parameter(Mandatory)][object]$Inventory)
 
+    $schemaVersion=Get-WpaPropertyValue $Inventory 'schemaVersion'
+    $policyHash=[string](Get-WpaPropertyValue $Inventory 'policyHash')
+    $managerScope=@(Get-WpaPropertyValue $Inventory 'managerScope' @() | ForEach-Object {[string]$_} | Sort-Object)
+    if($schemaVersion -ne 2 -or $policyHash -notmatch '^[a-f0-9]{64}$' -or $managerScope.Count -lt 1 -or @($managerScope | Where-Object {$_ -notin @('winget','scoop')}).Count -gt 0 -or @($managerScope | Group-Object).Where({$_.Count -gt 1}).Count -gt 0){throw 'INVENTORY_PROVENANCE_INVALID: schema v2 policy hash and manager scope are required.'}
     $environment = Get-WpaPropertyValue $Inventory 'environment'
     $environmentId = Get-WpaPropertyValue $environment 'id'
     if([string]::IsNullOrWhiteSpace([string]$environmentId)){throw 'INVENTORY_ENVIRONMENT_UNAVAILABLE: inventory environment identity is missing.'}
@@ -85,6 +89,8 @@ function Get-WpaInventoryStateHash {
     $state = [ordered]@{
         environmentId = $environmentId
         status = (Get-WpaPropertyValue $Inventory 'status' 'success')
+        policyHash = $policyHash
+        managerScope = $managerScope
         managers = $managers
         packages = $packages
     }

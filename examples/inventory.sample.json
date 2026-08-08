@@ -1,5 +1,7 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "policyHash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "managerScope": ["scoop", "winget"],
   "environment": { "id": "0000000000000000000000000000000000000000000000000000000000000000" },
   "collectedAt": "2026-08-04T00:00:00Z",
   "status": "success",

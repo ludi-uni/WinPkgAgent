@@ -53,6 +53,20 @@ Describe 'repository JSON Schema contracts' {
         $policyValid | Should -BeFalse
     }
 
+    It 'accepts the schema v2 sample inventory with policy provenance' {
+        $samplePath = Join-Path $repo 'examples/inventory.sample.json'
+        $valid = Test-Json -Path $samplePath -SchemaFile (Join-Path $schemaRoot 'inventory.schema.json')
+        $valid | Should -BeTrue
+    }
+
+    It 'rejects inventory artifacts without policy provenance' {
+        $inventory = Get-Content (Join-Path $repo 'examples/inventory.sample.json') -Raw | ConvertFrom-Json
+        $inventory.PSObject.Properties.Remove('policyHash')
+        $path = Join-Path $TestDrive 'missing-inventory-policy.json'
+        $inventory | ConvertTo-Json -Depth 10 | Set-Content $path
+        (Test-Json -Path $path -SchemaFile (Join-Path $schemaRoot 'inventory.schema.json') -ErrorAction SilentlyContinue) | Should -BeFalse
+    }
+
     It 'rejects an empty allowed manager scope' {
         $policy = [ordered]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch');allowedManagers=@();allowedSources=@('main');protectedPackages=@();dangerousCategories=@('driver','bios','uefi','firmware');allowUninstall=$false;requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=60;rebootHandling='record-only';unknownVersionHandling='block'}
         $path = Join-Path $TestDrive 'empty-manager-scope.json'
