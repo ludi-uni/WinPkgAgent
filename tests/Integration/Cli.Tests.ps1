@@ -23,4 +23,11 @@ Describe 'winpkg-agent CLI' {
         Get-WpaCliExitCode -Command invoke -Result ([pscustomobject]@{apply=@{status='success'};verify=@{status='failed'}}) | Should -Be 4
         Get-WpaCliExitCode -Command invoke -Result ([pscustomobject]@{apply=@{status='success'};verify=@{status='reboot-required'}}) | Should -Be 5
     }
+
+    It 'propagates policy paths through inventory and resume verification branches' {
+        $script = Get-Content $cli
+
+        $script | Should -Contain '        inventory { Get-WpaInventory -PolicyPath $PolicyPath -OutputPath $OutputPath -WhatIf:$WhatIf }'
+        $script | Should -Contain "        'resume-verify' { Resume-WpaVerification -PlanPath `$PlanPath -ApplyResultPath `$ApplyResultPath -PolicyPath `$PolicyPath -VerifyOutputPath `$VerifyOutputPath -WhatIf:`$WhatIf }"
+    }
 }

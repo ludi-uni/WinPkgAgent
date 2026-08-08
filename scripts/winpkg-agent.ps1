@@ -20,7 +20,7 @@ try {
     Import-Module $modulePath -Force
     $result=switch($Command){
         environment { Test-WpaEnvironment -PowerShellPath $PowerShellPath -PolicyPath $PolicyPath }
-        inventory { Get-WpaInventory -OutputPath $OutputPath -WhatIf:$WhatIf }
+        inventory { Get-WpaInventory -PolicyPath $PolicyPath -OutputPath $OutputPath -WhatIf:$WhatIf }
         manifest { Test-WpaManifest -Path $Path }
         plan { New-WpaPlan -ManifestPath $ManifestPath -PolicyPath $PolicyPath -InventoryPath $InventoryPath -OutputPath $OutputPath -MarkdownPath $MarkdownPath -WhatIf:$WhatIf }
         show { Show-WpaPlan -PlanPath $PlanPath }
@@ -32,7 +32,7 @@ try {
         'show-run' { Show-WpaRun -RunPath $RunPath }
         'approve-run' { Approve-WpaRun -RunPath $RunPath -WhatIf:$WhatIf }
         'invoke-run' { Invoke-WpaRun -RunPath $RunPath -WhatIf:$WhatIf -DiagnosticLogging:$false }
-        'resume-verify' { Resume-WpaVerification -PlanPath $PlanPath -ApplyResultPath $ApplyResultPath -VerifyOutputPath $VerifyOutputPath -WhatIf:$WhatIf }
+        'resume-verify' { Resume-WpaVerification -PlanPath $PlanPath -ApplyResultPath $ApplyResultPath -PolicyPath $PolicyPath -VerifyOutputPath $VerifyOutputPath -WhatIf:$WhatIf }
         'initialize' { Initialize-WpaProject -Path $(if($Path){$Path}else{'.'}) -Force:$false -WhatIf:$WhatIf }
         'export-candidate' { Export-WpaManifestCandidate -InventoryPath $InventoryPath -OutputPath $OutputPath -WhatIf:$WhatIf }
         'unmanaged-candidate' { Export-WpaUnmanagedCandidate -InventoryPath $InventoryPath -OutputPath $OutputPath -WhatIf:$WhatIf }
