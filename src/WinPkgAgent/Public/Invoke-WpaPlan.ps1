@@ -17,7 +17,7 @@ function Invoke-WpaPlan {
     if($plan.environmentId -ne (Get-WpaEnvironmentId)){throw 'Plan targets a different environment.'}
     $policy=Read-WpaPolicyFile $PolicyPath;Test-WpaDataSchema $policy policy|Out-Null
     if((Get-WpaObjectHash $policy) -ne $plan.policyHash){throw 'Policy changed after plan creation.'}
-    $currentInventory=ConvertTo-WpaInventoryBoundary (Get-WpaInventory)
+    $currentInventory=ConvertTo-WpaInventoryBoundary (Get-WpaInventory -PolicyPath $PolicyPath)
     $operations=@($plan.actions|Where-Object classification -in @('install','upgrade'))
     $relevantManagers=@($operations | ForEach-Object { [string](Get-WpaPropertyValue $_ 'manager') } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
     foreach($manager in $relevantManagers){
@@ -72,7 +72,7 @@ function Invoke-WpaPlan {
     $executed=@($results|Where-Object status -eq completed)
     $verifyItems=@()
     if($executed.Count -gt 0){
-        $afterInventory=Get-WpaInventory
+        $afterInventory=Get-WpaInventory -PolicyPath $PolicyPath
         $executedKeys=[System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         foreach($item in $executed){$null=$executedKeys.Add("$($item.manager)`0$($item.id)")}
         foreach($operation in $operations|Where-Object {$executedKeys.Contains("$($_.manager)`0$($_.id)")}){

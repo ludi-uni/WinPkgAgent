@@ -6,7 +6,7 @@ Describe 'WinPkgAgent sequential execution safety' {
         BeforeEach {
             $script:policy=[pscustomobject]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch','minor');allowUninstall=$false;allowedManagers=@('winget','scoop');allowedSources=@('main','winget');protectedPackages=@();dangerousCategories=@('driver');requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=600;rebootHandling='record-only';unknownVersionHandling='block'}
             $fingerprint=[pscustomobject]@{manager='scoop';pathHash=('a'*64);fileSha256=('b'*64);fileVersion=$null;lastWriteTimeUtc='2026-01-01T00:00:00Z';fileLength=1;isReparsePoint=$false;signatureStatus='not-applicable';signerSubject=$null;aclAssessment='trusted'}
-            $script:inventory=[pscustomobject]@{schemaVersion=1;environment=@{id='env'};status='success';managers=@(@{manager='scoop';status='success';version='1';fingerprint=$fingerprint});packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
+            $script:inventory=[pscustomobject]@{schemaVersion=2;policyHash=(Get-WpaObjectHash $policy);managerScope=@('scoop');environment=@{id='env'};status='success';managers=@(@{manager='scoop';status='success';version='1';fingerprint=$fingerprint});packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
             $actions=@('one','two'|ForEach-Object{[pscustomobject]@{name=$_;manager='scoop';id=$_;source='main';classification='install';operation='install';reasonCode='PACKAGE_NOT_INSTALLED';reason='missing';risk='low';targetVersion=$null;verification=$null}})
             $script:plan=[pscustomobject][ordered]@{schemaVersion=1;toolVersion='0.1.0';planId=[guid]::NewGuid().ToString();createdAt='2026-01-01T00:00:00Z';expiresAt='2099-01-01T00:00:00Z';environmentId='env';manifestHash=('a'*64);policyHash=(Get-WpaObjectHash $policy);inventoryHash=(Get-WpaInventoryStateHash $inventory);managerFingerprints=@([pscustomobject]@{manager='scoop';fingerprint=$fingerprint});actions=$actions;blockedOperations=@();warnings=@();contentHash=$null;planHash=$null}
             $plan.contentHash=Get-WpaObjectHash (Get-WpaPlanContent $plan);$plan.planHash=Get-WpaObjectHash (Get-WpaPlanHashInput $plan)
@@ -89,6 +89,26 @@ Describe 'WinPkgAgent sequential execution safety' {
             $result=Invoke-WpaPlan -PlanPath plan.json -ApprovalPath approval.json -PolicyPath policy.yaml -OutputPath $null -VerifyOutputPath $null -SummaryPath $null -Confirm:$false
             $result.verify.status | Should -Be 'failed'
             $result.verify.items[0].status | Should -Be 'indeterminate'
+        }
+
+        It 'passes the explicit policy path to current and post-apply inventory' {
+            $script:inventoryPolicyPaths = @()
+            $plan.actions = @($plan.actions[0])
+            $plan.contentHash = Get-WpaObjectHash (Get-WpaPlanContent $plan)
+            $plan.planHash = Get-WpaObjectHash (Get-WpaPlanHashInput $plan)
+            $approval.planHash = $plan.planHash
+            Mock Get-WpaInventory {
+                param([string]$PolicyPath)
+                $script:inventoryPolicyPaths += $PolicyPath
+                $inventory
+            }
+            Mock Invoke-WpaManagerAction { [pscustomobject]@{ExitCode=0;TimedOut=$false;DurationMs=5;StdOut='';StdErr=''} }
+            Mock Test-WpaExpectedState { [pscustomobject]@{name='tool';manager='scoop';id='one';status='verified';reasonCode='EXPECTED_STATE_PRESENT'} }
+
+            $result = Invoke-WpaPlan -PlanPath plan.json -ApprovalPath approval.json -PolicyPath policy.yaml -OutputPath $null -VerifyOutputPath $null -SummaryPath $null -Confirm:$false
+
+            $script:inventoryPolicyPaths | Should -Be @('policy.yaml', 'policy.yaml')
+            $result.verify.status | Should -Be 'success'
         }
 
         It 'journals before and after every attempted mutation' {
