@@ -45,7 +45,9 @@ Example Tool         Example.Tool                1.2.3               winget
             $inventoryPath = Join-Path $TestDrive 'inventory.json'
             $outputPath = Join-Path $TestDrive 'unmanaged-candidate.json'
             [IO.File]::WriteAllText($inventoryPath, (@{
-                schemaVersion = 1
+                schemaVersion = 2
+                policyHash = ('a' * 64)
+                managerScope = @('winget')
                 environment = @{ id = 'environment-id' }
                 collectedAt = '2026-08-08T00:00:00Z'
                 status = 'success'
