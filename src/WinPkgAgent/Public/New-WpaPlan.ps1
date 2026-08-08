@@ -9,8 +9,12 @@ function New-WpaPlan {
     if(-not $MarkdownPath){$MarkdownPath=[IO.Path]::ChangeExtension($OutputPath,'.md')}
     $policy=Read-WpaPolicyFile $PolicyPath; Test-WpaDataSchema $policy policy | Out-Null
     $inventory=ConvertTo-WpaInventoryBoundary (Read-WpaJsonFile $InventoryPath); Test-WpaDataSchema $inventory inventory | Out-Null
-    $declaredManagers=@($manifest.packages | ForEach-Object { [string](Get-WpaPropertyValue $_ 'manager') } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
-    foreach($manager in $declaredManagers){
+    $policyHash=Get-WpaObjectHash $policy
+    $inventoryPolicyHash=[string](Get-WpaPropertyValue $inventory 'policyHash')
+    $managerScope=@(Get-WpaPropertyValue $inventory 'managerScope' @() | ForEach-Object {[string]$_})
+    $allowedDeclaredManagers=@($manifest.packages | ForEach-Object { [string](Get-WpaPropertyValue $_ 'manager') } | Where-Object { $_ -in @($policy.allowedManagers) } | Sort-Object -Unique)
+    if($inventoryPolicyHash -ne $policyHash -or @($allowedDeclaredManagers | Where-Object { $_ -notin $managerScope }).Count -gt 0){throw 'INVENTORY_SCOPE_MISMATCH'}
+    foreach($manager in $allowedDeclaredManagers){
         $inventoryManager=@($inventory.managers | Where-Object { (Get-WpaPropertyValue $_ 'manager') -eq $manager } | Select-Object -First 1)
         if($inventoryManager.Count -eq 0){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $manager"}
         Assert-WpaManagerFingerprintEvidence -Manager $manager -Fingerprint (Get-WpaPropertyValue $inventoryManager[0] 'fingerprint') | Out-Null
