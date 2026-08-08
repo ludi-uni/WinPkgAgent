@@ -79,6 +79,21 @@ Describe 'repository JSON Schema contracts' {
             { Test-WpaPolicyObject -Policy $policy } | Should -Throw '*manager*'
         }
     }
+
+    It 'rejects an ordered-dictionary policy with no allowedManagers key' {
+        InModuleScope WinPkgAgent {
+            $policy = [ordered]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch');allowedManagers=@('scoop');allowedSources=@('main');protectedPackages=@();dangerousCategories=@('driver','bios','uefi','firmware');allowUninstall=$false;requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=60;rebootHandling='record-only';unknownVersionHandling='block'}
+            $policy.Remove('allowedManagers')
+            { Test-WpaPolicyObject -Policy $policy } | Should -Throw '*manager*'
+        }
+    }
+
+    It 'rejects an ordered-dictionary policy with a null allowedManagers value' {
+        InModuleScope WinPkgAgent {
+            $policy = [ordered]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch');allowedManagers=$null;allowedSources=@('main');protectedPackages=@();dangerousCategories=@('driver','bios','uefi','firmware');allowUninstall=$false;requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=60;rebootHandling='record-only';unknownVersionHandling='block'}
+            { Test-WpaPolicyObject -Policy $policy } | Should -Throw '*manager*'
+        }
+    }
 }
 
 Describe 'manifest semantic validation contract' {
