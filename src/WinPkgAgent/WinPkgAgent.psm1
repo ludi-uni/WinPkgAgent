@@ -26,5 +26,5 @@ Export-ModuleMember -Function @(
     'Approve-WpaPlan',
     'Test-WpaPlan',
     'Invoke-WpaPlan',
-    'New-WpaRun','Get-WpaRun','Show-WpaRun','Approve-WpaRun','Invoke-WpaRun','Resume-WpaVerification','Initialize-WpaProject','Export-WpaManifestCandidate'
+    'New-WpaRun','Get-WpaRun','Show-WpaRun','Approve-WpaRun','Invoke-WpaRun','Resume-WpaVerification','Initialize-WpaProject','Export-WpaManifestCandidate','Export-WpaUnmanagedCandidate'
 )

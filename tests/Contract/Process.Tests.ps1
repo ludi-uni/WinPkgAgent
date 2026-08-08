@@ -62,4 +62,26 @@ Describe 'Wpa process adapter contract' {
             $r.Arguments[1] | Should -Be 'a b'
         }
     }
+    It 'preserves redacted but non-truncated output for bounded table parsers' {
+        InModuleScope WinPkgAgent {
+            $path = Join-Path $TestDrive 'fixture-manager.exe'
+            [IO.File]::WriteAllText($path, 'fixture')
+            $script:WpaProcessFactory = {
+                param($StartInfo)
+                $output = [pscustomobject]@{}
+                Add-Member -InputObject $output -MemberType ScriptMethod -Name ReadToEndAsync -Value { [Threading.Tasks.Task]::FromResult(('row' * 5000)) } | Out-Null
+                $error = [pscustomobject]@{}
+                Add-Member -InputObject $error -MemberType ScriptMethod -Name ReadToEndAsync -Value { [Threading.Tasks.Task]::FromResult('') } | Out-Null
+                $fake = [pscustomobject]@{ StartInfo=$StartInfo;StandardOutput=$output;StandardError=$error;ExitCode=0 }
+                Add-Member -InputObject $fake -MemberType ScriptMethod -Name Start -Value { $true } | Out-Null
+                Add-Member -InputObject $fake -MemberType ScriptMethod -Name WaitForExit -Value { param($Milliseconds) if($PSBoundParameters.ContainsKey('Milliseconds')){$true} } | Out-Null
+                Add-Member -InputObject $fake -MemberType ScriptMethod -Name Kill -Value { param($EntireProcess) } | Out-Null
+                Add-Member -InputObject $fake -MemberType ScriptMethod -Name Dispose -Value { } | Out-Null
+                $fake
+            }
+            try { $r=Invoke-WpaProcess -FilePath ([IO.Path]::GetFullPath($path)) -NoTruncateOutput }
+            finally { $script:WpaProcessFactory = $null }
+            $r.StdOut.Length | Should -Be 15000
+        }
+    }
 }

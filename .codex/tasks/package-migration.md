@@ -17,12 +17,15 @@ Prepare as many current WinGet/Scoop-detected applications as possible for human
 - PowerShell: 7.6.3 during the live read-only run.
 - Current inventory after fixes: status `success`, WinGet `success`, Scoop `success`, 88 packages, 0 warnings.
 - Candidate artifact: `artifacts/migration-candidate.yaml`.
+- Unmanaged review artifact: `artifacts/unmanaged-candidate.json`.
+- Current unmanaged observations: 159; manager-resolvable candidates 2; manual-mapping observations 157.
 
 ## Verification limits
 
 - Local shell has Pester 3.4.0; repository tests use Pester 5.x assertions. Direct PowerShell 7 assertions and live read-only smoke checks are available; the full Pester suite still needs the declared development dependency.
 - No active manifest or approval digest was created because source, category, manager ownership, and reinstall impact require human review.
+- ARP/MSIX and source-less observations are deliberately isolated from the active manifest path.
 
 ## Next action
 
-Review `artifacts/migration-candidate.yaml`, then create an active manifest only after confirming each package and its source/category. Stop before `Approve-WpaPlan` and `Invoke-WpaPlan` until the user explicitly approves the resulting plan.
+Review `artifacts/migration-candidate.yaml` and `artifacts/unmanaged-candidate.json`, map any manager-candidate or manual-mapping observation to an explicit supported source/ID, then create an active manifest only after confirming each package and its source/category. Stop before `Approve-WpaPlan` and `Invoke-WpaPlan` until the user explicitly approves the resulting plan.

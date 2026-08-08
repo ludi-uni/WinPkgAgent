@@ -21,6 +21,8 @@ Use `New-WpaRun -ManifestPath ./packages.yaml -PolicyPath ./policy.yaml -Workspa
 
 `Initialize-WpaProject` creates safe starter files without installing Scoop, changing PATH, changing execution policy, or overwriting existing files. `Export-WpaManifestCandidate` creates a separate `reviewStatus: pending` candidate and never promotes it to the active manifest.
 
+Use `Export-WpaUnmanagedCandidate -InventoryPath ./artifacts/inventory.json -OutputPath ./artifacts/unmanaged-candidate.json` to record WinGet list entries that are not present in the export inventory. The JSON artifact is review-only; source-less ARP/MSIX identifiers remain `manual-mapping` and are never promoted automatically.
+
 ## PowerShell runtime diagnostics
 
 `Test-WpaEnvironment -PowerShellPath 'D:\Tools\PowerShell\7\pwsh.exe'` applies an absolute path for the current invocation only. A policy may contain `runtime.powershellPath` for a configured absolute path. Invalid explicit paths fail closed and do not fall back silently. The runtime probe uses `-NoLogo -NoProfile -NonInteractive` and validates JSON `PSEdition` and `PSVersion`.

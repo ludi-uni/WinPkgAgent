@@ -22,6 +22,102 @@ function ConvertFrom-WpaWingetFallback {
     }
     if ($rows.Count -eq 0) { return $null }; $rows
 }
+function ConvertFrom-WpaWingetList {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    $lines = @($Text -split "`r?`n")
+    $headerIndex = -1
+    $starts = $null
+    foreach ($labels in @(
+        @('Name','Id','Version','Available','Source'),
+        @('名前','ID','バージョン','利用可能','ソース')
+    )) {
+        for ($index = 0; $index -lt $lines.Count; $index++) {
+            $line = $lines[$index]
+            $candidateStarts = @()
+            $cursor = 0
+            $matched = $true
+            foreach ($label in $labels) {
+                $position = $line.IndexOf($label, $cursor, [StringComparison]::Ordinal)
+                if ($position -lt 0) { $matched = $false; break }
+                $candidateStarts += $position
+                $cursor = $position + $label.Length
+            }
+            if ($matched) { $headerIndex = $index; $starts = $candidateStarts; break }
+        }
+        if ($headerIndex -ge 0) { break }
+    }
+    if ($headerIndex -lt 0) { return $null }
+    $rows = [System.Collections.Generic.List[object]]::new()
+    for ($index = $headerIndex + 1; $index -lt $lines.Count; $index++) {
+        $line = $lines[$index]
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.Trim() -match '^-{3,}(?:\s+-{3,})*$') { continue }
+        $columns = @($line.Trim() -split '\s{2,}')
+        if ($columns.Count -eq 2) {
+            $tail = @($columns[1] -split '\s+')
+            if ($tail.Count -lt 2) { return $null }
+            $columns = @($columns[0], (($tail[0..($tail.Count - 2)] -join ' ')), $tail[-1])
+        }
+        if ($columns.Count -lt 3 -or $columns.Count -gt 5) { return $null }
+        $name = $columns[0]
+        $id = $columns[1]
+        $version = $columns[2]
+        $available = $null
+        $source = $null
+        switch ($columns.Count) {
+            4 {
+                if ($columns[3] -match '^(?i:winget|msstore)$') { $source = $columns[3] } else { $available = $columns[3] }
+            }
+            5 {
+                $available = $columns[3]
+                $source = $columns[4]
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($id) -or [string]::IsNullOrWhiteSpace($version)) { return $null }
+        $rows.Add([pscustomobject]@{
+            DisplayName = $name
+            Id = $id
+            Version = $version
+            AvailableVersion = if ($available) { $available } else { $null }
+            Source = if ($source) { $source } else { $null }
+        })
+    }
+    @($rows)
+}
+function Get-WpaWingetUnmanagedObservations {
+    [CmdletBinding()]
+    param([string[]]$KnownIds = @(), [int]$TimeoutSeconds = 30)
+    $executable = Resolve-WpaManagerExecutable -Manager winget
+    if (-not $executable) {
+        return [pscustomobject]@{ status='failed'; observations=@(); warning='winget list unavailable or malformed' }
+    }
+    $result = Invoke-WpaProcess -FilePath $executable -Arguments @('list','--disable-interactivity') -TimeoutSeconds $TimeoutSeconds -NoTruncateOutput
+    if ($result.TimedOut -or $result.ExitCode -ne 0) {
+        return [pscustomobject]@{ status='failed'; observations=@(); warning='winget list unavailable or malformed' }
+    }
+    $rows = ConvertFrom-WpaWingetList -Text $result.StdOut
+    if ($null -eq $rows) {
+        return [pscustomobject]@{ status='failed'; observations=@(); warning='winget list unavailable or malformed' }
+    }
+    $known = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($knownId in @($KnownIds)) { if ($knownId) { $known.Add([string]$knownId) | Out-Null } }
+    $observations = foreach ($row in @($rows)) {
+        if ($known.Contains([string]$row.Id)) { continue }
+        $managerCandidate = ([string]$row.Id -match '^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$') -and -not [string]::IsNullOrWhiteSpace([string]$row.Source)
+        [pscustomobject]@{
+            displayName = [string]$row.DisplayName
+            observedId = [string]$row.Id
+            installedVersion = [string]$row.Version
+            availableVersion = $row.AvailableVersion
+            source = $row.Source
+            actionability = if ($managerCandidate) { 'manager-candidate' } else { 'manual-mapping' }
+            reasonCode = if ($managerCandidate) { 'UNMANAGED_MANAGER_CANDIDATE' } else { 'UNMANAGED_ID_REQUIRES_MAPPING' }
+            reviewStatus = 'pending'
+            detectedBy = 'winget-list'
+        }
+    }
+    [pscustomobject]@{ status='success'; observations=@($observations); warning=$null }
+}
 function ConvertFrom-WpaWingetUpgrade {
     param([string]$Text)
     if($Text -notmatch '(?mi)^\s*(Name\s{2,}Id\s{2,}Version\s{2,}Available|\u540d\u524d\s{2,}ID\s{2,}\u30d0\u30fc\u30b8\u30e7\u30f3\s{2,}\u5229\u7528\u53ef\u80fd)'){return $null}

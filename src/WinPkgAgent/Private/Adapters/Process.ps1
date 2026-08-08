@@ -3,7 +3,8 @@ function Invoke-WpaProcess {
     param(
         [Parameter(Mandatory)][string]$FilePath,
         [string[]]$Arguments = @(),
-        [ValidateRange(1,3600)][int]$TimeoutSeconds = 30
+        [ValidateRange(1,3600)][int]$TimeoutSeconds = 30,
+        [switch]$NoTruncateOutput
     )
     if ([string]::IsNullOrWhiteSpace($FilePath)) {
         throw [System.ArgumentException]::new('FilePath is required.')
@@ -44,7 +45,7 @@ function Invoke-WpaProcess {
             $process.WaitForExit()
         }
         [System.Threading.Tasks.Task]::WaitAll(@($stdoutTask,$stderrTask))
-        $standardOutput=Protect-WpaSensitiveText $stdoutTask.Result
+        $standardOutput=if($NoTruncateOutput){Protect-WpaSensitiveText $stdoutTask.Result -NoTruncate}else{Protect-WpaSensitiveText $stdoutTask.Result}
         $standardError=Protect-WpaSensitiveText $stderrTask.Result;if($killError){$standardError=(Protect-WpaSensitiveText ($standardError+[Environment]::NewLine+$killError)).Trim()}
         return [pscustomobject]@{ Executable=$FilePath; Arguments=@($Arguments); ExitCode=if($timedOut){$null}else{$process.ExitCode}; StdOut=$standardOutput; StdErr=$standardError; DurationMs=[Math]::Max(0,[int]$started.ElapsedMilliseconds); TimedOut=$timedOut; Started=$true }
     } finally { $started.Stop(); $process.Dispose() }

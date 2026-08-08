@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://winpkg-agent.dev/schema/unmanaged-candidate.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "status", "observedAt", "inventoryStateHash", "reviewStatus", "warnings", "observations"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "status": { "enum": ["success", "partial", "failed"] },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "inventoryStateHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "reviewStatus": { "const": "pending" },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["displayName", "observedId", "installedVersion", "availableVersion", "source", "actionability", "reasonCode", "reviewStatus", "detectedBy"],
+        "properties": {
+          "displayName": { "type": "string", "minLength": 1 },
+          "observedId": { "type": "string", "minLength": 1 },
+          "installedVersion": { "type": ["string", "null"] },
+          "availableVersion": { "type": ["string", "null"] },
+          "source": { "type": ["string", "null"] },
+          "actionability": { "enum": ["manager-candidate", "manual-mapping"] },
+          "reasonCode": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+          "reviewStatus": { "const": "pending" },
+          "detectedBy": { "const": "winget-list" }
+        }
+      }
+    }
+  }
+}

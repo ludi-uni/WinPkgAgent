@@ -21,4 +21,14 @@ Export-WpaManifestCandidate `
   -OutputPath ./artifacts/migration-candidate.yaml
 ```
 
+WinGetのexportに含まれないインストール済み項目も、別の保留レビュー成果物として確認できます。これはactive manifestではありません。ARP/MSIX IDやsource不明項目は手動マッピングのままになり、自動的にインストール候補へ昇格しません。
+
+```powershell
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -File ./scripts/winpkg-agent.ps1 unmanaged-candidate `
+  -InventoryPath ./artifacts/migration-inventory.json `
+  -OutputPath ./artifacts/unmanaged-candidate.json
+```
+
+一覧形式が未知または途中で壊れている場合は、推測せず `partial` / `failed` として記録します。WinGetにはsource同意やパッケージ変更の引数を渡しません。
+
 CLI終了コードは、`0` が成功または `-WhatIf`、`1` がコマンド／事前検証エラー、`2` が検証結果不正、`3` が部分適用失敗、`4` が適用後検証失敗、`5` が再起動待ちです。ツール自身は再起動しません。

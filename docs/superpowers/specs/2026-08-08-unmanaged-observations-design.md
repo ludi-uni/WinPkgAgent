@@ -27,6 +27,8 @@ Detect installed Windows applications that are visible to `winget list` but are 
 
 `Get-WpaWingetUnmanagedObservations` resolves the verified WinGet executable and invokes only `list --disable-interactivity`. It parses the result, excludes IDs already present in the supplied inventory, and returns structured observations with `detectedBy = winget-list`. A row is `manager-candidate` only when its ID matches the documented manager-ID allow-list and its source is non-empty. Other rows are `manual-mapping` and cannot enter an active manifest without human mapping.
 
+The process adapter keeps its normal redacted/truncated diagnostic behavior. The list call opts into redacted but non-truncated in-memory stdout only because a long ARP/MSIX ID can exceed WinGet's display column width; the full output is parsed immediately and is not persisted.
+
 `Export-WpaUnmanagedCandidate` reads an existing inventory artifact, calls the read-only observation adapter, and writes `unmanaged-candidate.schema.json` data with `reviewStatus = pending`. This artifact is deliberately separate from `migration-candidate.yaml`, so no downstream plan can consume it accidentally as an active manifest.
 
 ## Safety and failure handling

@@ -172,4 +172,58 @@ Describe 'manager contract parsers' {
     It 'preserves special characters in display identifiers' { InModuleScope WinPkgAgent { $x=ConvertFrom-WpaWingetExport '{"Sources":[{"Packages":[{"PackageIdentifier":"Contoso.App_+Test","Version":"1.0"}]}]}'; $x[0].Id | Should -Be 'Contoso.App_+Test' } }
     It 'parses update metadata only with known locale headers' { InModuleScope WinPkgAgent { (ConvertFrom-WpaWingetUpgrade "Name  Id  Version  Available`nContoso App  Contoso.App  1.0  2.0").Items[0].AvailableVersion | Should -Be '2.0'; ConvertFrom-WpaWingetUpgrade 'x y z' | Should -BeNullOrEmpty } }
     It 'does not accept source agreements during read-only inventory' { InModuleScope WinPkgAgent { Mock Invoke-WpaProcess { [pscustomobject]@{ExitCode=1;TimedOut=$false;StdOut='';StdErr='';DurationMs=1} }; Get-WpaWingetInventory | Out-Null; Should -Invoke Invoke-WpaProcess -ParameterFilter { $Arguments -contains '--accept-source-agreements' } -Times 0 -Exactly } }
+    It 'parses English and Japanese winget list rows with source-less identifiers' {
+        InModuleScope WinPkgAgent {
+            $english = @'
+Name                 Id                         Version  Available  Source
+-------------------  -------------------------  -------  ---------  ------
+Ablaze Floorp         ARP\Machine\X64\Floorp     12.10.4
+7-Zip                7zip.7zip                  25.01    26.02      winget
+'@
+            $japanese = @'
+名前                 ID                         バージョン  利用可能  ソース
+-------------------  -------------------------  ---------  --------  ------
+Ablaze Floorp         ARP\Machine\X64\Floorp     12.10.4
+7-Zip                7zip.7zip                  25.01     26.02     winget
+'@
+            $en = @(ConvertFrom-WpaWingetList -Text $english)
+            $ja = @(ConvertFrom-WpaWingetList -Text $japanese)
+            $en | Should -HaveCount 2
+            $ja | Should -HaveCount 2
+            $en[0].Id | Should -Be 'ARP\Machine\X64\Floorp'
+            $en[0].Source | Should -BeNullOrEmpty
+            $en[1].AvailableVersion | Should -Be '26.02'
+            $ja[1].Source | Should -Be 'winget'
+        }
+    }
+    It 'accepts a recognized empty winget list and rejects malformed rows' {
+        InModuleScope WinPkgAgent {
+            $empty = @'
+Name                 Id                         Version  Available  Source
+-------------------  -------------------------  -------  ---------  ------
+'@
+            $unknown = "Package Name  Identifier`n----"
+            $malformed = @'
+Name                 Id                         Version  Available  Source
+-------------------  -------------------------  -------  ---------  ------
+malformed row without enough columns
+'@
+            @(ConvertFrom-WpaWingetList -Text $empty) | Should -HaveCount 0
+            ConvertFrom-WpaWingetList -Text $unknown | Should -BeNullOrEmpty
+            ConvertFrom-WpaWingetList -Text $malformed | Should -BeNullOrEmpty
+        }
+    }
+    It 'parses a long ARP identifier when it exceeds the header column width' {
+        InModuleScope WinPkgAgent {
+            $text = @'
+Name                 Id                         Version  Available  Source
+-------------------  -------------------------  -------  ---------  ------
+NVIDIA Driver        ARP\Machine\X64\{B2FE1952-0186-46C3-BAEC-A80AA35AC5B8}_Display.Driver                 610.62
+'@
+            $rows = @(ConvertFrom-WpaWingetList -Text $text)
+            $rows | Should -HaveCount 1
+            $rows[0].Id | Should -Match 'Display\.Driver$'
+            $rows[0].Version | Should -Be '610.62'
+        }
+    }
 }

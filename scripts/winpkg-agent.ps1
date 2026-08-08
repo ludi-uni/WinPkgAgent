@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory,Position=0)][ValidateSet('environment','inventory','manifest','plan','show','approve','validate-plan','invoke','new-run','get-run','show-run','approve-run','invoke-run','resume-verify','initialize','export-candidate')][string]$Command,
+    [Parameter(Mandatory,Position=0)][ValidateSet('environment','inventory','manifest','plan','show','approve','validate-plan','invoke','new-run','get-run','show-run','approve-run','invoke-run','resume-verify','initialize','export-candidate','unmanaged-candidate')][string]$Command,
     [string]$Path,[string]$ManifestPath,[string]$PolicyPath,[string]$InventoryPath,[string]$PlanPath,[string]$ApprovalPath,[string]$RunPath,[string]$WorkspacePath,[string]$ApplyResultPath,[string]$PowerShellPath,
     [string]$OutputPath,[string]$MarkdownPath,[string]$VerifyOutputPath,[string]$SummaryPath,[switch]$WhatIf
 )
@@ -35,6 +35,7 @@ try {
         'resume-verify' { Resume-WpaVerification -PlanPath $PlanPath -ApplyResultPath $ApplyResultPath -VerifyOutputPath $VerifyOutputPath -WhatIf:$WhatIf }
         'initialize' { Initialize-WpaProject -Path $(if($Path){$Path}else{'.'}) -Force:$false -WhatIf:$WhatIf }
         'export-candidate' { Export-WpaManifestCandidate -InventoryPath $InventoryPath -OutputPath $OutputPath -WhatIf:$WhatIf }
+        'unmanaged-candidate' { Export-WpaUnmanagedCandidate -InventoryPath $InventoryPath -OutputPath $OutputPath -WhatIf:$WhatIf }
     }
     $result
     exit (Get-WpaCliExitCode -Command $Command -Result $result)

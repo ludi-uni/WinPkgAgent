@@ -30,7 +30,7 @@
 - `ConvertFrom-WpaWingetList -Text <string>` returns an array for valid output, an empty array for a recognized empty table, and `$null` for unknown or malformed output.
 - `Get-WpaWingetUnmanagedObservations -KnownIds <string[]>` returns a result with `status`, `observations`, and `warning` fields.
 
-- [ ] **Step 1: Write failing parser tests**
+- [x] **Step 1: Write failing parser tests**
 
 Add contract tests for these exact fixtures:
 
@@ -41,7 +41,7 @@ $japanese = "名前                 ID                         バージョン  
 
 Assert that IDs, installed versions, blank source, and `winget` source are preserved. Add a recognized header with only a separator and assert `@(...).Count -eq 0`; add an unknown header and a malformed row and assert `$null`.
 
-- [ ] **Step 2: Run the parser tests and confirm failure**
+- [x] **Step 2: Run the parser tests and confirm failure**
 
 Run:
 
@@ -51,13 +51,14 @@ Run:
 
 Expected: the new parser command is unavailable and the new tests fail before implementation.
 
-- [ ] **Step 3: Add observation behavior tests**
+- [x] **Step 3: Add observation behavior tests**
 
 Mock `Resolve-WpaManagerExecutable` and `Invoke-WpaProcess`. Return the fixture above for `list`, and assert that `KnownIds = @('7zip.7zip')` excludes 7-Zip, leaves the ARP row as `manual-mapping`, and never invokes arguments containing `--accept-source-agreements` or `--accept-package-agreements`. Add a failed-process fixture and assert no observations are returned.
 
 ### Task 2: Implement strict WinGet list observations
 
 **Files:**
+- Modify: `src/WinPkgAgent/Private/Adapters/Process.ps1`
 - Modify: `src/WinPkgAgent/Private/Adapters/Winget.ps1`
 - Test: `tests/Contract/Manager.Tests.ps1`
 
@@ -65,15 +66,15 @@ Mock `Resolve-WpaManagerExecutable` and `Invoke-WpaProcess`. Return the fixture 
 - `ConvertFrom-WpaWingetList` is private and pure.
 - `Get-WpaWingetUnmanagedObservations` is private and performs only one read-only process call.
 
-- [ ] **Step 1: Implement header-offset parsing**
+- [x] **Step 1: Implement recognized-header and strict row parsing**
 
-Recognize the exact English labels `Name`, `Id`, `Version`, `Available`, `Source` and Japanese labels `名前`, `ID`, `バージョン`, `利用可能`, `ソース`. Derive each start offset from the header, extract fields by substring, trim whitespace, require name/id/version, and reject any non-separator row that cannot be parsed. Return `$null` on uncertainty.
+Recognize the exact English labels `Name`, `Id`, `Version`, `Available`, `Source` and Japanese labels `名前`, `ID`, `バージョン`, `利用可能`, `ソース`. Use the header only to establish the output contract, parse rows by strict two-or-more-space boundaries, handle long IDs whose final version token is separated by one space, require name/id/version, and reject any non-separator row that cannot be parsed. Return `$null` on uncertainty.
 
-- [ ] **Step 2: Implement the read-only observation adapter**
+- [x] **Step 2: Implement the read-only observation adapter**
 
-Resolve the verified executable, call `Invoke-WpaProcess -Arguments @('list','--disable-interactivity')`, parse stdout, and return `status='failed'` on unavailable/malformed output. Exclude case-insensitive known IDs. Set `actionability='manager-candidate'` only for IDs matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$` with a non-empty source; otherwise set `actionability='manual-mapping'` and `reasonCode='UNMANAGED_ID_REQUIRES_MAPPING'`.
+Add a `-NoTruncateOutput` switch to `Invoke-WpaProcess`; it must retain redaction while bypassing only the 4096-character diagnostic truncation. Resolve the verified executable, call `Invoke-WpaProcess -Arguments @('list','--disable-interactivity') -NoTruncateOutput`, parse stdout, and return `status='failed'` on unavailable/malformed output. Exclude case-insensitive known IDs. Set `actionability='manager-candidate'` only for IDs matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$` with a non-empty source; otherwise set `actionability='manual-mapping'` and `reasonCode='UNMANAGED_ID_REQUIRES_MAPPING'`.
 
-- [ ] **Step 3: Run focused direct assertions**
+- [x] **Step 3: Run focused direct assertions**
 
 Use PowerShell 7 to import the module, call the parser with English/Japanese/empty/malformed fixtures, and assert the exact result counts and classifications.
 
@@ -92,19 +93,19 @@ Use PowerShell 7 to import the module, call the parser with English/Japanese/emp
 - `Export-WpaUnmanagedCandidate -InventoryPath <string> -OutputPath <string>` reads the inventory, invokes the observation adapter with inventory IDs, validates the result against `unmanaged-candidate.schema.json`, writes an atomic JSON review artifact, and returns `status`, `path`, and `count`.
 - CLI command `unmanaged-candidate` maps `-InventoryPath` and `-OutputPath` to that public function.
 
-- [ ] **Step 1: Define the schema**
+- [x] **Step 1: Define the schema**
 
 Require `schemaVersion=1`, `status`, `observedAt`, `inventoryStateHash`, `reviewStatus='pending'`, `warnings`, and `observations`. Require each observation to contain `displayName`, `observedId`, `installedVersion`, `availableVersion`, `source`, `actionability`, `reasonCode`, `reviewStatus`, and `detectedBy='winget-list'`. Allow only `manager-candidate` and `manual-mapping` actionability values.
 
-- [ ] **Step 2: Implement the exporter**
+- [x] **Step 2: Implement the exporter**
 
 Read and validate the existing inventory, calculate its state hash, call the observation adapter, preserve failure/partial warnings, validate the review object, and write it only through `Write-WpaAtomicJson`. Never write an active manifest or approval artifact.
 
-- [ ] **Step 3: Wire the public command and CLI**
+- [x] **Step 3: Wire the public command and CLI**
 
 Add the public function to both module export lists, add `unmanaged-candidate` to the CLI `ValidateSet`, dispatch it, and add it to the expected command list test. Do not alter the existing `manifest`, `plan`, `approve`, or `invoke` paths.
 
-- [ ] **Step 4: Run unit, schema, and CLI tests**
+- [x] **Step 4: Run unit, schema, and CLI tests**
 
 Run the focused tests, `Test-Json` against a generated review artifact, and the CLI command with a fixture inventory. The fixture test must assert that no active manifest or approval file is created.
 
@@ -116,7 +117,7 @@ Run the focused tests, `Test-Json` against a generated review artifact, and the 
 - Modify: `docs/package-ownership.md`
 - Modify: `.codex/tasks/package-migration.md`
 
-- [ ] **Step 1: Document the review-only command**
+- [x] **Step 1: Document the review-only command**
 
 Document the absolute PowerShell 7 command:
 
@@ -126,15 +127,15 @@ Document the absolute PowerShell 7 command:
 
 State that ARP/MSIX and source-less IDs remain manual mappings and cannot be approved automatically.
 
-- [ ] **Step 2: Run live read-only inventory and unmanaged observation**
+- [x] **Step 2: Run live read-only inventory and unmanaged observation**
 
 Run inventory, export the existing pending manifest candidate, then run `unmanaged-candidate` under the user's PowerShell 7.4+ context. Confirm manager state, observation count, schema validation, and absence of mutation calls.
 
-- [ ] **Step 3: Review safety and diff**
+- [x] **Step 3: Review safety and diff**
 
 Run AST parsing, `git diff --check`, search changed files for forbidden mutation additions, confirm no raw executable paths in artifacts, and confirm the unrelated main-worktree file is untouched.
 
-- [ ] **Step 4: Record evidence in Plane**
+- [x] **Step 4: Record evidence in Plane**
 
 Add one concise verification comment to the existing WinPkgAgent task. Keep the item in the existing `In Progress` state because the project has no Review state; do not mark it Done or invoke approval.
 
@@ -143,15 +144,15 @@ Add one concise verification comment to the existing WinPkgAgent task. Keep the 
 **Files:**
 - Commit only the changed source, tests, schemas, docs, and task-state files; keep generated artifacts ignored.
 
-- [ ] **Step 1: Run the repository-supported verification set**
+- [x] **Step 1: Run the repository-supported verification set**
 
 Run the closest tests first, then schema/CLI checks, then the live read-only smoke command. Report the local Pester 3 vs repository Pester 5 limitation without installing dependencies.
 
-- [ ] **Step 2: Inspect status and diff**
+- [x] **Step 2: Inspect status and diff**
 
 Require a clean worktree except for intentionally ignored artifacts and no changes outside the worktree.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```powershell
 git add src tests schemas scripts docs .codex/tasks/package-migration.md
