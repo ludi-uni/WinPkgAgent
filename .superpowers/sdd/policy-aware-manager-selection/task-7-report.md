@@ -28,3 +28,12 @@ Complete. The four inventory schema-v2 fixture failures are closed without chang
 
 - Pester reports `Get-CimInstance` access-denied warnings while writing environment metadata in this managed test host.
 - The full-suite command returns a failing status because the three pre-existing baseline tests remain unchanged, as required.
+
+## Final verification fix round 1
+
+- Corrected `examples/inventory.sample.json` to the default policy hash `1756ff7ed2d3e16b1b0d153edcd85f7d2bb96f7f404b91ae5dfcacc90c6f0fd5`.
+- Added deterministic, schema-valid trusted/valid fingerprints for both `winget` and `scoop`, including fixed hashes, timestamps, lengths, and `isReparsePoint: false`.
+- Schema/sample validation: passed.
+- Full safe `tests` suite: 183 passed, 3 unchanged baseline failures.
+- Fixture-only plan CLI `-WhatIf`: passed without writing `TestResults/whatif-plan.json`.
+- `git diff --check`: passed.
