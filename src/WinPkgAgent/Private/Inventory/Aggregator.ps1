@@ -34,8 +34,9 @@ function Get-WpaInventoryAggregate {
         if($managerWarning){$warnings += [string]$managerWarning}
         if($adapterWarning){$inventoryWarnings += [string]$adapterWarning}
     }
+    $usable=@($managerRecords | Where-Object { $_.status -in @('success','partial') }).Count
     $successful=@($managerRecords | Where-Object { $_.status -eq 'success' }).Count
-    $status=if($successful -eq 0){'failed'}elseif($successful -lt $managerScope.Count -or $inventoryWarnings.Count -gt 0){'partial'}else{'success'}
+    $status=if($usable -eq 0){'failed'}elseif($successful -lt $managerScope.Count -or $inventoryWarnings.Count -gt 0){'partial'}else{'success'}
     $envId=if(Get-Command Get-WpaEnvironmentId -ErrorAction SilentlyContinue){Get-WpaEnvironmentId}else{$null}
     [pscustomobject]@{schemaVersion=2;policyHash=$PolicyHash;managerScope=@($managerScope);environment=[pscustomobject]@{id=$envId};collectedAt=$CollectedAt.ToUniversalTime().ToString('o');status=$status;managers=@($managerRecords);packages=@($packages);warnings=@($warnings)}
 }

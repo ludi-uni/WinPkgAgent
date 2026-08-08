@@ -7,6 +7,16 @@ Describe 'inventory aggregation' {
     It 'reports winget-only success as partial' { InModuleScope WinPkgAgent { $r=Get-WpaInventoryAggregate -Managers @('winget','scoop') -PolicyHash ('a' * 64) -Adapters @{winget={ [pscustomobject]@{Success=$true;Packages=@();Warning=$null} }}; $r.status | Should -Be 'partial'; $r.managers.Count | Should -Be 2 } }
     It 'reports scoop-only success as partial' { InModuleScope WinPkgAgent { $r=Get-WpaInventoryAggregate -Managers @('winget','scoop') -PolicyHash ('a' * 64) -Adapters @{scoop={ [pscustomobject]@{Success=$true;Packages=@();Warning=$null} }}; $r.status | Should -Be 'partial' } }
     It 'reports both successful managers as success' { InModuleScope WinPkgAgent { $r=Get-WpaInventoryAggregate -Managers @('winget','scoop') -PolicyHash ('a' * 64) -Adapters @{winget={ [pscustomobject]@{Success=$true;Packages=@();Warning=$null} };scoop={ [pscustomobject]@{Success=$true;Packages=@();Warning=$null} }}; $r.status | Should -Be 'success' } }
+    It 'reports two selected partial managers as partial' {
+        InModuleScope WinPkgAgent {
+            $r=Get-WpaInventoryAggregate -Managers @('winget','scoop') -PolicyHash ('a' * 64) -Adapters @{
+                winget={ [pscustomobject]@{Success=$true;status='partial';Packages=@();Warning=$null} }
+                scoop={ [pscustomobject]@{Success=$true;status='partial';Packages=@();Warning=$null} }
+            }
+            $r.status | Should -Be 'partial'
+            @($r.managers.status) | Should -Be @('partial','partial')
+        }
+    }
     It 'keeps both successful managers successful when fingerprints are unavailable' {
         InModuleScope WinPkgAgent {
             Mock Resolve-WpaManagerExecutable { 'C:\fixtures\manager.exe' }
