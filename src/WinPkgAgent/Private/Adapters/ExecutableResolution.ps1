@@ -39,6 +39,7 @@ function Resolve-WpaManagerExecutable {
         $path = Get-WpaPropertyValue $command 'Path'
         if([string]::IsNullOrWhiteSpace([string]$path)){$path = Get-WpaPropertyValue $command 'Source'}
         $path = if($null -ne $path){[string]$path}else{$null}
+        if($Manager -eq 'scoop' -and $path -and [IO.Path]::GetExtension($path).ToLowerInvariant() -in @('.ps1','.psm1')){continue}
         if($path -and -not ($Manager -eq 'winget' -and (Test-WpaWindowsAppsAlias -Path $path)) -and (Test-WpaVerifiedExecutablePath -Path $path)){return [IO.Path]::GetFullPath($path)}
     }
 

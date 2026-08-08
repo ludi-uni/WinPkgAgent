@@ -69,6 +69,16 @@ Describe 'manager contract parsers' {
             Resolve-WpaManagerExecutable -Manager scoop | Should -Be ([IO.Path]::GetFullPath($path))
         }
     }
+    It 'skips a Scoop PowerShell shim and resolves a process-compatible command shim' {
+        InModuleScope WinPkgAgent {
+            $ps1 = Join-Path $TestDrive 'scoop.ps1'
+            $cmd = Join-Path $TestDrive 'scoop.cmd'
+            [IO.File]::WriteAllText($ps1, 'Write-Output scoop')
+            [IO.File]::WriteAllText($cmd, '@echo off')
+            Mock Get-Command { @([pscustomobject]@{ Path = $ps1 }, [pscustomobject]@{ Path = $cmd }) }
+            Resolve-WpaManagerExecutable -Manager scoop | Should -Be ([IO.Path]::GetFullPath($cmd))
+        }
+    }
 
     It 'ignores command results with neither Path nor Source' {
         InModuleScope WinPkgAgent {
@@ -134,10 +144,29 @@ Describe 'manager contract parsers' {
     It 'parses winget export and rejects malformed data' {
         InModuleScope WinPkgAgent { $x=ConvertFrom-WpaWingetExport '{"Sources":[{"Packages":[{"PackageIdentifier":"Contoso.App","Version":"1.2.3"}]}]}'; $x[0].Id | Should -Be 'Contoso.App'; (ConvertFrom-WpaWingetExport '{bad') | Should -BeNullOrEmpty }
     }
+    It 'accepts an empty winget export as an empty package set' {
+        InModuleScope WinPkgAgent { @(ConvertFrom-WpaWingetExport '{"Sources":[]}') | Should -HaveCount 0 }
+    }
     It 'parses scoop export' { InModuleScope WinPkgAgent { $x=ConvertFrom-WpaScoopExport '[{"name":"git","version":"2.45.1","bucket":"main"}]'; $x[0].Id | Should -Be 'git' } }
+    It 'accepts an empty scoop export as an empty package set' {
+        InModuleScope WinPkgAgent { @(ConvertFrom-WpaScoopExport '{"buckets":[],"apps":[]}') | Should -HaveCount 0 }
+    }
     It 'parses a winget upgrade row whose display name contains spaces' { InModuleScope WinPkgAgent { $x=ConvertFrom-WpaWingetUpgrade "Name              Id               Version  Available  Source`nMozilla Firefox   Mozilla.Firefox  128.0    129.0      winget"; $x.Valid | Should -BeTrue; $x.Items[0].Id | Should -Be 'Mozilla.Firefox'; $x.Items[0].AvailableVersion | Should -Be '129.0' } }
     It 'rejects an unknown winget upgrade locale' { InModuleScope WinPkgAgent { ConvertFrom-WpaWingetUpgrade "Paquet  Courant  Nouveau`noutil 1 2" | Should -BeNullOrEmpty } }
     It 'parses a scoop status row whose columns are aligned with spaces' { InModuleScope WinPkgAgent { $x=ConvertFrom-WpaScoopStatus "Name  Installed  Latest`ngit   2.45.0     2.46.0"; $x.Valid | Should -BeTrue; $x.Items[0].AvailableVersion | Should -Be '2.46.0' } }
+    It 'treats a successful Scoop status with no installed apps as an empty update set' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\scoop.cmd' }
+            Mock Invoke-WpaProcess {
+                if ($Arguments[0] -eq 'export') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '{"buckets":[],"apps":[]}'; StdErr = '' } }
+                if ($Arguments[0] -eq '--version') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '0.5.3'; StdErr = '' } }
+                [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = 'WARN  Scoop bucket(s) out of date.'; StdErr = '' }
+            }
+            $result = Get-WpaScoopInventory
+            $result.status | Should -Be 'success'
+            @($result.Packages) | Should -HaveCount 0
+        }
+    }
     It 'builds scoop install spec as one literal argument' { InModuleScope WinPkgAgent { Mock Invoke-WpaProcess { [pscustomobject]@{ExitCode=0} }; Install-WpaScoopPackage -Id git -Version 2.45.1 -Source main; Assert-MockCalled Invoke-WpaProcess -ParameterFilter { $Arguments[1] -eq 'main/git@2.45.1' -and $Arguments[2] -eq '--no-update-scoop' } } }
     It 'accepts English and Japanese fallback headers only' { InModuleScope WinPkgAgent { (ConvertFrom-WpaWingetFallback "Name Version`nContoso.App 1.2.3").Count | Should -Be 1; (ConvertFrom-WpaWingetFallback "名前 バージョン`nContoso.App 1.2.3").Count | Should -Be 1; ConvertFrom-WpaWingetFallback 'Unknown locale output' | Should -BeNullOrEmpty } }
     It 'preserves special characters in display identifiers' { InModuleScope WinPkgAgent { $x=ConvertFrom-WpaWingetExport '{"Sources":[{"Packages":[{"PackageIdentifier":"Contoso.App_+Test","Version":"1.0"}]}]}'; $x[0].Id | Should -Be 'Contoso.App_+Test' } }
