@@ -30,3 +30,10 @@ Commit: containing commit (`feat: propagate policy scope through environment CLI
 - Pester code coverage reported 4.48% for the focused two-file run against the configured 75% threshold; this is a focused run, not a full-suite coverage claim.
 - The run emitted existing managed `Get-CimInstance` access-denied warnings during coverage metadata collection.
 - All manager availability was fixture/mock based. No real WinGet or Scoop calls ran.
+
+## Fix round 1
+
+- Reviewer finding: no-policy environment inspection incorrectly required both managers because the policy-scoped all-managers default was reused without a policy.
+- RED: added `keeps no-policy readiness ready with either available manager`; the safe focused suite failed with expected `Expected $true, but got $false` while WinGet was unavailable and Scoop was available.
+- GREEN: separated no-policy readiness (`winget -or scoop`) from policy-scoped all-allowed-manager readiness. The safe Environment/Cli Pester command passed 9 tests with 0 failures and 0 skips.
+- No other Task 3 scope changed; manager availability remained fixture/mock based and no real manager calls ran.

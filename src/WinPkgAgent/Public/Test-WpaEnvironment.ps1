@@ -12,9 +12,13 @@ function Test-WpaEnvironment {
     $runtime=Get-WpaPowerShellRuntimeInfo -PowerShellPath $configuredPath;$runtimeArtifact=ConvertTo-WpaPowerShellRuntimeArtifact -Runtime $runtime
     $winget=if('winget' -in $allowedManagers){[bool](Test-WpaWingetAvailable)}else{$false}
     $scoop=if('scoop' -in $allowedManagers){[bool](Test-WpaScoopAvailable)}else{$false}
-    $allowedManagersAvailable=$allowedManagers.Count -gt 0
-    foreach($manager in $allowedManagers){
-        if(($manager -eq 'winget' -and -not $winget) -or ($manager -eq 'scoop' -and -not $scoop) -or $manager -notin @('winget','scoop')){$allowedManagersAvailable=$false}
+    if($PolicyPath){
+        $allowedManagersAvailable=$allowedManagers.Count -gt 0
+        foreach($manager in $allowedManagers){
+            if(($manager -eq 'winget' -and -not $winget) -or ($manager -eq 'scoop' -and -not $scoop) -or $manager -notin @('winget','scoop')){$allowedManagersAvailable=$false}
+        }
+    } else {
+        $allowedManagersAvailable=$winget -or $scoop
     }
     [pscustomobject]@{
         schemaVersion=1; environmentId=(Get-WpaEnvironmentId); powerShellVersion=$runtimeArtifact.version

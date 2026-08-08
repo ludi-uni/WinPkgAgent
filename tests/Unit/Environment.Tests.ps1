@@ -66,5 +66,16 @@ Describe 'policy-aware environment readiness' {
             $result.powerShellSupported | Should -BeFalse
             $result.managers.scoop | Should -BeTrue
         }
+
+        It 'keeps no-policy readiness ready with either available manager' {
+            Mock Test-WpaWingetAvailable { $false }
+            Mock Test-WpaScoopAvailable { $true }
+
+            $result = Test-WpaEnvironment
+
+            $result.ready | Should -BeTrue
+            $result.managers.winget | Should -BeFalse
+            $result.managers.scoop | Should -BeTrue
+        }
     }
 }
