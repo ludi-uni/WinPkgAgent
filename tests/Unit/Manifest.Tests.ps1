@@ -65,6 +65,20 @@ Describe 'repository JSON Schema contracts' {
             { Test-WpaPolicyObject -Policy ([pscustomobject]$Policy) } | Should -Throw '*manager*'
         }
     }
+
+    It 'rejects a policy with no allowedManagers property' {
+        InModuleScope WinPkgAgent {
+            $policy = [pscustomobject]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch');allowedSources=@('main');protectedPackages=@();dangerousCategories=@('driver','bios','uefi','firmware');allowUninstall=$false;requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=60;rebootHandling='record-only';unknownVersionHandling='block'}
+            { Test-WpaPolicyObject -Policy $policy } | Should -Throw '*manager*'
+        }
+    }
+
+    It 'rejects a policy with a null allowedManagers property' {
+        InModuleScope WinPkgAgent {
+            $policy = [pscustomobject]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch');allowedManagers=$null;allowedSources=@('main');protectedPackages=@();dangerousCategories=@('driver','bios','uefi','firmware');allowUninstall=$false;requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=60;rebootHandling='record-only';unknownVersionHandling='block'}
+            { Test-WpaPolicyObject -Policy $policy } | Should -Throw '*manager*'
+        }
+    }
 }
 
 Describe 'manifest semantic validation contract' {
