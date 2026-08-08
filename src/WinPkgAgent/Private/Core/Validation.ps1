@@ -85,6 +85,7 @@ function Test-WpaPolicyObject {
     [CmdletBinding()]
     param([Parameter(Mandatory)][object]$Policy)
     if ($Policy.schemaVersion -ne 1) { throw 'Unsupported policy schemaVersion.' }
+    if (@($Policy.allowedManagers).Count -lt 1) { throw 'At least one allowed manager is required.' }
     if ($Policy.allowUninstall -ne $false) { throw 'Uninstall must remain disabled in v0.1.' }
     if ($Policy.requireApproval -ne $true) { throw 'Approval must remain required in v0.1.' }
     if ($Policy.unknownVersionHandling -ne 'block') { throw 'Unknown versions must be blocked.' }

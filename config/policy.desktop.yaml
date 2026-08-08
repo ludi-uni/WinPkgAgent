@@ -1,0 +1,27 @@
+schemaVersion: 1
+allowInstall: true
+allowUpgrade:
+  - patch
+  - minor
+allowedManagers:
+  - winget
+  - scoop
+allowedSources:
+  - winget
+  - main
+  - extras
+  - versions
+protectedPackages: []
+dangerousCategories:
+  - driver
+  - bios
+  - uefi
+  - firmware
+allowUninstall: false
+requireApproval: true
+approvalValidityMinutes: 30
+rejectStateChanges: true
+maxOperations: 20
+operationTimeoutSeconds: 600
+rebootHandling: record-only
+unknownVersionHandling: block

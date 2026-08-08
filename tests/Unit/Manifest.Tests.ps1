@@ -52,6 +52,19 @@ Describe 'repository JSON Schema contracts' {
         $policyValid = try { Test-Json -Path $path -SchemaFile (Join-Path $schemaRoot 'policy.schema.json') -ErrorAction Stop } catch { $false }
         $policyValid | Should -BeFalse
     }
+
+    It 'rejects an empty allowed manager scope' {
+        $policy = [ordered]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch');allowedManagers=@();allowedSources=@('main');protectedPackages=@();dangerousCategories=@('driver','bios','uefi','firmware');allowUninstall=$false;requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=60;rebootHandling='record-only';unknownVersionHandling='block'}
+        $path = Join-Path $TestDrive 'empty-manager-scope.json'
+        $policy | ConvertTo-Json | Set-Content $path
+        $policyValid = try { Test-Json -Path $path -SchemaFile (Join-Path $schemaRoot 'policy.schema.json') -ErrorAction Stop } catch { $false }
+        $policyValid | Should -BeFalse
+
+        InModuleScope WinPkgAgent -Parameters @{ Policy=$policy } {
+            param($Policy)
+            { Test-WpaPolicyObject -Policy ([pscustomobject]$Policy) } | Should -Throw '*manager*'
+        }
+    }
 }
 
 Describe 'manifest semantic validation contract' {
@@ -141,6 +154,19 @@ Describe 'manifest semantic validation contract' {
         InModuleScope WinPkgAgent {
             $policy = [pscustomobject]@{ schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch','major');allowUninstall=$false;allowedManagers=@('winget');allowedSources=@('winget');protectedPackages=@();dangerousCategories=@();requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=60;rebootHandling='record-only';unknownVersionHandling='block' }
             { Test-WpaPolicyObject -Policy $policy } | Should -Throw
+        }
+    }
+
+    It 'validates the explicit manager policy samples through the policy reader' {
+        $configRoot = Join-Path ((Resolve-Path (Join-Path $PSScriptRoot '../..')).Path) 'config'
+        InModuleScope WinPkgAgent -Parameters @{ ConfigRoot=$configRoot } {
+            param($ConfigRoot)
+            $codex = Read-WpaPolicyFile -Path (Join-Path $ConfigRoot 'policy.codex.yaml')
+            @($codex.allowedManagers) | Should -BeExactly @('scoop')
+            @($codex.allowedSources) | Should -BeExactly @('main','extras','versions')
+            $desktop = Read-WpaPolicyFile -Path (Join-Path $ConfigRoot 'policy.desktop.yaml')
+            @($desktop.allowedManagers) | Should -BeExactly @('winget','scoop')
+            @($desktop.allowedSources) | Should -BeExactly @('winget','main','extras','versions')
         }
     }
 }
