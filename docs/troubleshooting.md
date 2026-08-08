@@ -46,7 +46,11 @@ Then pass that path to `Invoke-WpaPlan`. AI agents cannot create or approve this
 
 ## Inventory is partial or failed
 
-Check PowerShell 7.4+, manager availability, export command output, timeout diagnostics, and the relevant contract fixture. Do not convert a parser mismatch into guessed package state; partial state blocks relevant mutations.
+Check PowerShell 7.4+, the explicitly selected `-PolicyPath`, manager availability, export command output, timeout diagnostics, and the relevant contract fixture. Policy is never inferred from the host or Codex. Inventory is schema v2 and must contain `policyHash` and `managerScope`; regenerate schema-v1 or unscoped artifacts before planning. Do not convert a parser mismatch into guessed package state; partial state blocks relevant mutations.
+
+`MANAGER_UNAVAILABLE` means an allowed manager could not be resolved or its inventory is unavailable. `INVENTORY_SCOPE_MISMATCH` means the inventory policy hash or manager scope differs from the selected policy. Under `config/policy.codex.yaml`, a manifest package declared for WinGet is intentionally blocked as `MANAGER_NOT_ALLOWED`; it is not remapped to Scoop. The tool does not change PATH or execution policy, alter App Installer/OS policy, elevate, install managers, or bypass approval.
+
+For a Codex/Scoop-only inventory, use `Get-WpaInventory -PolicyPath ./config/policy.codex.yaml -OutputPath ./artifacts/codex-inventory.json`. For desktop WinGet+Scoop, use `./config/policy.desktop.yaml` or `./config/policy.default.yaml`. Pass the same policy path to resume verification with `Resume-WpaVerification` or CLI `resume-verify`.
 
 ## Plan cannot be applied
 

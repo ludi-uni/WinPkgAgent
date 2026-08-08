@@ -16,6 +16,10 @@ v0.1 は `state: present` のみを対象とし、アンインストール・昇
 
 各パッケージには `source` と `category` の明示が必要です。Scoopのinventoryとinstallは対応しますが、公式updateコマンドでは承認した正確な版を固定できないため、v0.1ではScoop upgradeをブロックします。
 
+policyの選択は明示的に行い、ホスト、PATH、Codexから推測しません。CodexでScoopだけを許可する場合は `config/policy.codex.yaml`、デスクトップでWinGetとScoopを許可する場合は `config/policy.desktop.yaml` または `config/policy.default.yaml` を選びます。environment、inventory、plan、apply、verificationでは同じpolicyファイルを使います。
+
+inventory成果物はschema v2で、`policyHash` と `managerScope` を持ちます。schema v1またはscopeなしの古いinventoryは、planの前に再生成してください。policy hashまたはmanager scopeが一致しないplanは `INVENTORY_SCOPE_MISMATCH` でフェイルクローズします。
+
 ## 要件と依存関係
 
 PowerShell 7.4 以降が必要です。YAML パーサーは明示的にインストールします（自動インストールはありません）。
@@ -51,12 +55,21 @@ Test-WpaEnvironment
 
 ```powershell
 Test-WpaEnvironment
-Get-WpaInventory -OutputPath ./artifacts/inventory.json
+Get-WpaInventory -PolicyPath ./config/policy.default.yaml -OutputPath ./artifacts/inventory.json
 New-WpaPlan -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/policy.default.yaml -InventoryPath ./artifacts/inventory.json -OutputPath ./artifacts/plan.json -MarkdownPath ./artifacts/plan.md
 Show-WpaPlan -PlanPath ./artifacts/plan.json
 # ここで人間が計画を確認し、対話端末で Approve-WpaPlan を実行します。
 Invoke-WpaPlan -PlanPath ./artifacts/plan.json -PolicyPath ./config/policy.default.yaml -Preflight
 ```
+
+Codex/Scoop限定の例ではpolicyを明示します。
+
+```powershell
+Get-WpaInventory -PolicyPath ./config/policy.codex.yaml -OutputPath ./artifacts/codex-inventory.json
+New-WpaPlan -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/policy.codex.yaml -InventoryPath ./artifacts/codex-inventory.json -OutputPath ./artifacts/codex-plan.json -MarkdownPath ./artifacts/codex-plan.md
+```
+
+Codex/Scoop限定policyでWinGetを宣言したmanifest項目は `MANAGER_NOT_ALLOWED` でblockedになります。Scoopへのfallback/remap、PATHや実行ポリシーの変更、App Installer/OS policyの変更、権限昇格、managerの導入、承認のバイパスは行いません。`MANAGER_UNAVAILABLE` は許可されたmanagerを利用できない状態、`INVENTORY_SCOPE_MISMATCH` はinventoryのpolicy hashまたはmanager scopeが選択policyと一致しない状態です。
 
 `-WhatIf`では変更アダプターを呼びません。承認は計画ダイジェストへの明示的同意であり、本人認証やロールバック保証ではありません。
 

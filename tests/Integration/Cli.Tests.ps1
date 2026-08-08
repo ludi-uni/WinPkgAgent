@@ -30,4 +30,31 @@ Describe 'winpkg-agent CLI' {
         $script | Should -Contain '        inventory { Get-WpaInventory -PolicyPath $PolicyPath -OutputPath $OutputPath -WhatIf:$WhatIf }'
         $script | Should -Contain "        'resume-verify' { Resume-WpaVerification -PlanPath `$PlanPath -ApplyResultPath `$ApplyResultPath -PolicyPath `$PolicyPath -VerifyOutputPath `$VerifyOutputPath -WhatIf:`$WhatIf }"
     }
+
+    It 'documents explicit policy-scoped inventory and fail-closed migration guidance' {
+        $docs = @(
+            (Get-Content (Join-Path $root 'README.md') -Raw),
+            (Get-Content (Join-Path $root 'README.ja.md') -Raw),
+            (Get-Content (Join-Path $root 'docs/usage.md') -Raw),
+            (Get-Content (Join-Path $root 'docs/usage.ja.md') -Raw),
+            (Get-Content (Join-Path $root 'docs/architecture.md') -Raw),
+            (Get-Content (Join-Path $root 'docs/architecture.ja.md') -Raw),
+            (Get-Content (Join-Path $root 'docs/troubleshooting.md') -Raw)
+        ) -join "`n"
+
+        $docs | Should -Match 'Get-WpaInventory[\s\S]*-PolicyPath[\s\S]*config/policy\.codex\.yaml'
+        $docs | Should -Match 'config/policy\.(desktop|default)\.yaml'
+        $docs | Should -Match 'policyHash'
+        $docs | Should -Match 'managerScope'
+        $docs | Should -Match 'schema v2'
+        $docs | Should -Match 'INVENTORY_SCOPE_MISMATCH'
+        $docs | Should -Match 'MANAGER_NOT_ALLOWED'
+        $docs | Should -Match 'MANAGER_UNAVAILABLE'
+        $docs | Should -Match 'resume-verify[\s\S]*-PolicyPath'
+
+        $samplePath = Join-Path $root 'examples/inventory.sample.json'
+        $sample = Get-Content $samplePath -Raw | ConvertFrom-Json
+        $sample.schemaVersion | Should -Be 2
+        (Test-Json -Path $samplePath -SchemaFile (Join-Path $root 'schemas/inventory.schema.json')) | Should -BeTrue
+    }
 }
