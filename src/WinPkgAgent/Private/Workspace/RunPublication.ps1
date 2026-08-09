@@ -12,10 +12,43 @@ namespace WinPkgAgent.Native
     {
         private const uint DeleteAccess = 0x00010000;
         private const uint ReadAttributesAccess = 0x00000080;
-        private const uint OpenExisting = 3;
-        private const uint BackupSemantics = 0x02000000;
+        private const uint FileShareRead = 0x00000001;
+        private const uint FileShareWrite = 0x00000002;
+        private const uint FileShareDelete = 0x00000004;
+        private const uint FileCreate = 0x00000002;
+        private const uint FileDirectoryFile = 0x00000001;
+        private const uint FileAttributeDirectory = 0x00000010;
+        private const uint ObjectCaseInsensitive = 0x00000040;
+        private const ulong FileCreated = 2;
         private const int FileRenameInfo = 3;
+        private const int StatusObjectNameCollision = unchecked((int)0xC0000035);
         private SafeFileHandle handle;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct UnicodeString
+        {
+            internal ushort Length;
+            internal ushort MaximumLength;
+            internal IntPtr Buffer;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ObjectAttributes
+        {
+            internal int Length;
+            internal IntPtr RootDirectory;
+            internal IntPtr ObjectName;
+            internal uint Attributes;
+            internal IntPtr SecurityDescriptor;
+            internal IntPtr SecurityQualityOfService;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IoStatusBlock
+        {
+            internal IntPtr Status;
+            internal UIntPtr Information;
+        }
 
         private OwnedDirectoryHandle(SafeFileHandle handle)
         {
@@ -27,30 +60,101 @@ namespace WinPkgAgent.Native
             get { return handle != null && !handle.IsInvalid && !handle.IsClosed; }
         }
 
-        public static OwnedDirectoryHandle Create(string path, out bool directoryCreated)
+        public static OwnedDirectoryHandle CreateAtomically(string path)
         {
-            directoryCreated = false;
-            if (!CreateDirectoryW(path, IntPtr.Zero))
+            string ntPath = ToNtPath(path);
+            int pathByteLength = System.Text.Encoding.Unicode.GetByteCount(ntPath);
+            if (pathByteLength > ushort.MaxValue - sizeof(char))
             {
-                throw new Win32Exception(Marshal.GetLastWin32Error());
+                throw new IOException("Atomic directory path is too long.");
             }
-            directoryCreated = true;
 
-            SafeFileHandle directoryHandle = CreateFileW(
-                path,
-                DeleteAccess | ReadAttributesAccess,
-                FileShare.Read | FileShare.Write | FileShare.Delete,
-                IntPtr.Zero,
-                OpenExisting,
-                BackupSemantics,
-                IntPtr.Zero);
-            if (directoryHandle.IsInvalid)
+            IntPtr pathBuffer = IntPtr.Zero;
+            IntPtr unicodeStringBuffer = IntPtr.Zero;
+            IntPtr rawHandle = IntPtr.Zero;
+            try
             {
-                int error = Marshal.GetLastWin32Error();
-                directoryHandle.Dispose();
-                throw new Win32Exception(error);
+                pathBuffer = Marshal.StringToHGlobalUni(ntPath);
+                UnicodeString unicodeString = new UnicodeString
+                {
+                    Length = (ushort)pathByteLength,
+                    MaximumLength = (ushort)(pathByteLength + sizeof(char)),
+                    Buffer = pathBuffer
+                };
+                unicodeStringBuffer = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
+                Marshal.StructureToPtr(unicodeString, unicodeStringBuffer, false);
+
+                ObjectAttributes objectAttributes = new ObjectAttributes
+                {
+                    Length = Marshal.SizeOf<ObjectAttributes>(),
+                    RootDirectory = IntPtr.Zero,
+                    ObjectName = unicodeStringBuffer,
+                    Attributes = ObjectCaseInsensitive,
+                    SecurityDescriptor = IntPtr.Zero,
+                    SecurityQualityOfService = IntPtr.Zero
+                };
+                IoStatusBlock ioStatusBlock;
+                int status = NtCreateFile(
+                    out rawHandle,
+                    DeleteAccess | ReadAttributesAccess,
+                    ref objectAttributes,
+                    out ioStatusBlock,
+                    IntPtr.Zero,
+                    FileAttributeDirectory,
+                    FileShareRead | FileShareWrite | FileShareDelete,
+                    FileCreate,
+                    FileDirectoryFile,
+                    IntPtr.Zero,
+                    0);
+                if (status < 0)
+                {
+                    if (status == StatusObjectNameCollision)
+                    {
+                        throw new IOException("Atomic directory already exists.");
+                    }
+                    throw new IOException("Atomic directory creation failed.");
+                }
+                if (rawHandle == IntPtr.Zero || rawHandle == new IntPtr(-1) || ioStatusBlock.Information.ToUInt64() != FileCreated)
+                {
+                    if (rawHandle != IntPtr.Zero && rawHandle != new IntPtr(-1))
+                    {
+                        new SafeFileHandle(rawHandle, true).Dispose();
+                        rawHandle = IntPtr.Zero;
+                    }
+                    throw new IOException("Atomic directory creation returned an invalid result.");
+                }
+
+                SafeFileHandle directoryHandle = new SafeFileHandle(rawHandle, true);
+                rawHandle = IntPtr.Zero;
+                return new OwnedDirectoryHandle(directoryHandle);
             }
-            return new OwnedDirectoryHandle(directoryHandle);
+            finally
+            {
+                if (rawHandle != IntPtr.Zero && rawHandle != new IntPtr(-1))
+                {
+                    new SafeFileHandle(rawHandle, true).Dispose();
+                }
+                if (unicodeStringBuffer != IntPtr.Zero) { Marshal.FreeHGlobal(unicodeStringBuffer); }
+                if (pathBuffer != IntPtr.Zero) { Marshal.FreeHGlobal(pathBuffer); }
+            }
+        }
+
+        private static string ToNtPath(string path)
+        {
+            string fullPath = Path.GetFullPath(path);
+            if (fullPath.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+            {
+                return @"\??\UNC\" + fullPath.Substring(8);
+            }
+            if (fullPath.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase))
+            {
+                return @"\??\" + fullPath.Substring(4);
+            }
+            if (fullPath.StartsWith(@"\\", StringComparison.OrdinalIgnoreCase))
+            {
+                return @"\??\UNC\" + fullPath.Substring(2);
+            }
+            return @"\??\" + fullPath;
         }
 
         public void Rename(string destinationPath)
@@ -96,19 +200,19 @@ namespace WinPkgAgent.Native
             }
         }
 
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool CreateDirectoryW(string path, IntPtr securityAttributes);
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern SafeFileHandle CreateFileW(
-            string fileName,
+        [DllImport("ntdll.dll")]
+        private static extern int NtCreateFile(
+            out IntPtr fileHandle,
             uint desiredAccess,
-            FileShare shareMode,
-            IntPtr securityAttributes,
-            uint creationDisposition,
-            uint flagsAndAttributes,
-            IntPtr templateFile);
+            ref ObjectAttributes objectAttributes,
+            out IoStatusBlock ioStatusBlock,
+            IntPtr allocationSize,
+            uint fileAttributes,
+            uint shareAccess,
+            uint createDisposition,
+            uint createOptions,
+            IntPtr eaBuffer,
+            uint eaLength);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -120,6 +224,17 @@ namespace WinPkgAgent.Native
     }
 }
 '@
+}
+
+function New-WpaOwnedDirectoryHandleAtomically {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    try {
+        return [WinPkgAgent.Native.OwnedDirectoryHandle]::CreateAtomically([IO.Path]::GetFullPath($Path))
+    } catch {
+        throw 'PREVIEW_STAGING_OWNERSHIP_NOT_ACQUIRED'
+    }
 }
 
 function Resolve-WpaTrustedWorkspacePath {
@@ -254,11 +369,12 @@ function New-WpaRunStagingOwnership {
 
     $stream = $null
     $directoryHandle = $null
-    $directoryCreated = $false
+    $directoryAcquired = $false
     try {
         [IO.Directory]::CreateDirectory($runsFull) | Out-Null
         Assert-WpaTrustedPublicationAncestry -WorkspacePath $workspaceFull -RunsPath $runsFull -StagingPath $stagingFull | Out-Null
-        $directoryHandle = [WinPkgAgent.Native.OwnedDirectoryHandle]::Create($stagingFull, [ref]$directoryCreated)
+        $directoryHandle = New-WpaOwnedDirectoryHandleAtomically -Path $stagingFull
+        $directoryAcquired = $true
         Assert-WpaTrustedPublicationAncestry -WorkspacePath $workspaceFull -RunsPath $runsFull -StagingPath $stagingFull -StagingMustExist | Out-Null
         $markerPath = [IO.Path]::Combine($stagingFull, '.wpa-staging-owner')
         $token = [guid]::NewGuid().ToString('N')
@@ -294,7 +410,7 @@ function New-WpaRunStagingOwnership {
     } catch {
         if ($null -ne $stream) { $stream.Dispose() }
         if ($null -ne $directoryHandle) { $directoryHandle.Dispose() }
-        if ($directoryCreated) { throw 'PREVIEW_STAGING_PRESERVED' }
+        if ($directoryAcquired) { throw 'PREVIEW_STAGING_PRESERVED' }
         throw 'PREVIEW_STAGING_OWNERSHIP_NOT_ACQUIRED'
     }
 }

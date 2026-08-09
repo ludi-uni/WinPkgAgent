@@ -350,6 +350,53 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Get-ChildItem (Join-Path $workspace 'runs') -Directory -Filter '.staging-*' | Should -BeNullOrEmpty
             }
 
+            It 'atomically creates staging and returns the retained owned directory handle' {
+                $runs = Join-Path $TestDrive 'atomic-acquisition/runs'
+                $staging = Join-Path $runs '.staging-20260809-010203-aabbccdd'
+                [IO.Directory]::CreateDirectory($runs) | Out-Null
+
+                $handle = New-WpaOwnedDirectoryHandleAtomically -Path $staging
+                try {
+                    $handle.IsOpen | Should -BeTrue
+                    [IO.Directory]::Exists($staging) | Should -BeTrue
+                    @(Get-ChildItem -LiteralPath $staging -Force) | Should -BeNullOrEmpty
+                } finally {
+                    if ($null -ne $handle) { $handle.Dispose() }
+                }
+            }
+
+            It 'rejects an atomic acquisition collision without changing or deleting the existing directory' {
+                $runs = Join-Path $TestDrive 'atomic-collision/runs'
+                $staging = Join-Path $runs '.staging-20260809-010203-aabbccdd'
+                $foreignFile = Join-Path $staging 'foreign.txt'
+                [IO.Directory]::CreateDirectory($staging) | Out-Null
+                [IO.File]::WriteAllText($foreignFile, 'preserve-collision')
+                Mock Remove-Item {}
+
+                { New-WpaOwnedDirectoryHandleAtomically -Path $staging } |
+                    Should -Throw 'PREVIEW_STAGING_OWNERSHIP_NOT_ACQUIRED'
+
+                [IO.File]::ReadAllText($foreignFile) | Should -BeExactly 'preserve-collision'
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
+            It 'fails closed without staging or publication when native atomic acquisition fails' {
+                $workspace = Join-Path $TestDrive 'workspace-native-acquisition-failure'
+                $runs = Join-Path $workspace 'runs'
+                $staging = Join-Path $runs ".staging-$($script:preparedRun.runId)"
+                $final = Join-Path $runs $script:preparedRun.runId
+                Mock New-WpaOwnedDirectoryHandleAtomically { throw 'PREVIEW_STAGING_OWNERSHIP_NOT_ACQUIRED' }
+                Mock Remove-Item {}
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw 'PREVIEW_STAGING_OWNERSHIP_NOT_ACQUIRED'
+
+                Test-Path $staging | Should -BeFalse
+                Test-Path $final | Should -BeFalse
+                Should -Invoke New-WpaOwnedDirectoryHandleAtomically -Times 1 -Exactly
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
             It 'leaves no workspace when preparation fails' {
                 Mock New-WpaRunPreparation { throw 'simulated preparation failure' }
                 $workspace = Join-Path $TestDrive 'workspace-preparation-failure'
@@ -666,6 +713,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Mock Read-WpaJsonFile { throw 'JSON_READ_CALLED' }
                 Mock Join-Path { throw 'JOIN_PATH_CALLED' }
                 Mock New-WpaRunStagingOwnership { throw 'NATIVE_HANDLE_CALLED' }
+                Mock New-WpaOwnedDirectoryHandleAtomically { throw 'ATOMIC_NATIVE_HANDLE_CALLED' }
 
                 $result = New-WpaRun -ManifestPath missing-manifest.yaml -PolicyPath missing-policy.yaml -WorkspacePath $workspace -Now ([datetimeoffset]'2026-08-08T01:02:03Z') -WhatIf
 
@@ -691,6 +739,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Should -Invoke Read-WpaJsonFile -Times 0 -Exactly
                 Should -Invoke Join-Path -Times 0 -Exactly
                 Should -Invoke New-WpaRunStagingOwnership -Times 0 -Exactly
+                Should -Invoke New-WpaOwnedDirectoryHandleAtomically -Times 0 -Exactly
             }
         }
     }
