@@ -26,25 +26,64 @@ Describe 'WinPkgAgent run workspace boundaries' {
             { Get-WpaRunArtifactPath $run plan } | Should -Throw '*reparse*'
         }
 
+        It 'returns validated run metadata through the workspace reader' {
+            $expected = [pscustomobject]@{runId='20260809-010203-aabbccdd';currentStage='planned'}
+            Mock Read-WpaRun { $expected }
+
+            $actual = Get-WpaRun -RunPath 'fixture-run'
+
+            [object]::ReferenceEquals($expected, $actual) | Should -BeTrue
+        }
+
+        It 'shows the fixed plan artifact and returns the validated run metadata' {
+            $runPath = Join-Path $TestDrive 'show-run'
+            $expected = [pscustomobject]@{runId='20260809-010203-aabbccdd';currentStage='planned'}
+            $script:shownPlanPath = $null
+            Mock Read-WpaRun { $expected }
+            Mock Show-WpaPlan { param($PlanPath) $script:shownPlanPath = $PlanPath }
+
+            $actual = Show-WpaRun -RunPath $runPath
+
+            [object]::ReferenceEquals($expected, $actual) | Should -BeTrue
+            $script:shownPlanPath | Should -BeExactly (Join-Path $runPath 'plan.json')
+        }
+
+        It 'persists an allowed run stage only to the fixed run metadata path' {
+            $runPath = Join-Path $TestDrive 'stage-run'
+            $run = [pscustomobject]@{runId='20260809-010203-aabbccdd';currentStage='planned'}
+            $script:stageWritePath = $null
+            $script:stageWriteData = $null
+            Mock Read-WpaRun { $run }
+            Mock Write-WpaAtomicJson { param($Path,$Data) $script:stageWritePath=$Path;$script:stageWriteData=$Data }
+
+            $actual = Set-WpaRunStage -RunPath $runPath -Stage preflighted
+
+            $actual.currentStage | Should -BeExactly 'preflighted'
+            $script:stageWritePath | Should -BeExactly (Join-Path $runPath 'run.json')
+            [object]::ReferenceEquals($actual, $script:stageWriteData) | Should -BeTrue
+        }
+
         It 'exports the new high-level commands without approval bypasses' {
             (Get-Command New-WpaRun,Invoke-WpaRun,Resume-WpaVerification,Initialize-WpaProject,Export-WpaManifestCandidate).Count | Should -Be 5
             (Get-Command Invoke-WpaPlan).Parameters.Keys | Should -Not -Contain 'Force'
         }
 
-        It 'forwards the explicit policy path when resuming verification' {
-            $script:inventoryPolicyPath = $null
-            $plan = [pscustomobject]@{planId='plan-1';actions=@([pscustomobject]@{manager='scoop';id='tool'})}
+        It 'uses the parsed explicit policy when resuming verification' {
+            $script:inventoryPolicy = $null
+            $policy = [pscustomobject][ordered]@{schemaVersion=1;allowedManagers=@('scoop')}
+            $plan = [pscustomobject]@{planId='plan-1';policyHash=(Get-WpaObjectHash $policy);actions=@([pscustomobject]@{manager='scoop';id='tool'})}
             $apply = [pscustomobject]@{planId='plan-1';rebootRequired=$true;operations=@([pscustomobject]@{manager='scoop';id='tool';status='completed'})}
             $inventory = [pscustomobject]@{schemaVersion=2;policyHash=('a' * 64);managerScope=@();environment=@{id='env'};status='success';managers=@();packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
             Mock Read-WpaJsonFile { param([string]$Path) if($Path -eq 'plan.json'){$plan}else{$apply} }
+            Mock Read-WpaPolicyFile { $policy }
             Mock Test-WpaDataSchema { $true }
-            Mock Get-WpaInventory { param([string]$PolicyPath) $script:inventoryPolicyPath = $PolicyPath; $inventory }
+            Mock Get-WpaInventoryForPolicy { param($Policy) $script:inventoryPolicy = $Policy; $inventory }
             Mock Test-WpaExpectedState { [pscustomobject]@{status='verified';reasonCode='EXPECTED_STATE_PRESENT'} }
             Mock Write-WpaAtomicJson {}
 
             Resume-WpaVerification -PlanPath plan.json -ApplyResultPath apply.json -PolicyPath explicit-policy.yaml -VerifyOutputPath $null -WhatIf
 
-            $script:inventoryPolicyPath | Should -Be 'explicit-policy.yaml'
+            [object]::ReferenceEquals($policy, $script:inventoryPolicy) | Should -BeTrue
         }
 
         Context 'trusted run preparation' {
@@ -103,6 +142,61 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 @($snapshot.manifest.profiles) | Should -Be @('base')
             }
 
+            It 'reads each manifest policy and selected profile path exactly once' {
+                $manifestText = "schemaVersion: 1`nprofiles:`n  - base`npackages: []`n"
+                $profileText = "schemaVersion: 1`nprofiles: []`npackages: []`n"
+                $profileDirectory = Join-Path $inputRoot 'profiles'
+                $profilePath = Join-Path $profileDirectory 'base.yaml'
+                [IO.Directory]::CreateDirectory($profileDirectory) | Out-Null
+                [IO.File]::WriteAllText($manifestPath, $manifestText, $utf8)
+                [IO.File]::WriteAllText($profilePath, $profileText, $utf8)
+                $script:pathReadCounts = @{}
+                Mock Read-WpaTextFile {
+                    param($Path)
+                    $key = [IO.Path]::GetFullPath($Path)
+                    $script:pathReadCounts[$key] = 1 + [int]$script:pathReadCounts[$key]
+                    [Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes($key))
+                }
+
+                $snapshot = Read-WpaRunInputSnapshot -ManifestPath $manifestPath -PolicyPath $policyPath
+
+                $snapshot.profiles[0].name | Should -BeExactly 'base'
+                $script:pathReadCounts[[IO.Path]::GetFullPath($manifestPath)] | Should -Be 1
+                $script:pathReadCounts[[IO.Path]::GetFullPath($policyPath)] | Should -Be 1
+                $script:pathReadCounts[[IO.Path]::GetFullPath($profilePath)] | Should -Be 1
+                $script:pathReadCounts.Count | Should -Be 3
+            }
+
+            It 'uses profile candidate precedence and fallbacks' -ForEach @(
+                @{ Case='local'; Local=$true; Parent=$true; Example=$true; Expected='local-tool' }
+                @{ Case='parent'; Local=$false; Parent=$true; Example=$true; Expected='parent-tool' }
+                @{ Case='parent example'; Local=$false; Parent=$false; Example=$true; Expected='example-tool' }
+            ) {
+                $caseRoot = Join-Path $inputRoot ([guid]::NewGuid().ToString('N'))
+                $caseManifestDirectory = Join-Path $caseRoot 'manifest'
+                $caseManifestPath = Join-Path $caseManifestDirectory 'manifest.yaml'
+                [IO.Directory]::CreateDirectory($caseManifestDirectory) | Out-Null
+                $manifestText = "schemaVersion: 1`nprofiles:`n  - base`npackages: []`n"
+                [IO.File]::WriteAllText($caseManifestPath, $manifestText, $utf8)
+                $localProfiles = Join-Path $caseManifestDirectory 'profiles'
+                $parentProfiles = Join-Path $caseRoot 'profiles'
+                [IO.Directory]::CreateDirectory($localProfiles) | Out-Null
+                [IO.Directory]::CreateDirectory($parentProfiles) | Out-Null
+                if ($Local) {
+                    [IO.File]::WriteAllText((Join-Path $localProfiles 'base.yaml'), "schemaVersion: 1`nprofiles: []`npackages:`n  - name: local-tool`n    manager: scoop`n    id: local-tool`n    state: present`n    source: main`n    category: cli`n", $utf8)
+                }
+                if ($Parent) {
+                    [IO.File]::WriteAllText((Join-Path $parentProfiles 'base.yaml'), "schemaVersion: 1`nprofiles: []`npackages:`n  - name: parent-tool`n    manager: scoop`n    id: parent-tool`n    state: present`n    source: main`n    category: cli`n", $utf8)
+                }
+                if ($Example) {
+                    [IO.File]::WriteAllText((Join-Path $parentProfiles 'base.example.yaml'), "schemaVersion: 1`nprofiles: []`npackages:`n  - name: example-tool`n    manager: scoop`n    id: example-tool`n    state: present`n    source: main`n    category: cli`n", $utf8)
+                }
+
+                $snapshot = Read-WpaRunInputSnapshot -ManifestPath $caseManifestPath -PolicyPath $policyPath
+
+                @($snapshot.manifest.packages.name) | Should -BeExactly @($Expected)
+            }
+
             It 'rejects an invalid profile name before resolving profile files' {
                 $invalidManifestText = "schemaVersion: 1`nprofiles:`n  - Bad_Profile`npackages: []`n"
                 [IO.File]::WriteAllText($manifestPath, $invalidManifestText, $utf8)
@@ -121,6 +215,41 @@ Describe 'WinPkgAgent run workspace boundaries' {
 
                 { Read-WpaRunInputSnapshot -ManifestPath $manifestPath -PolicyPath $policyPath } |
                     Should -Throw 'Nested profiles are not supported.'
+            }
+
+            It 'preserves canonical CRLF bytes without a terminal newline in the input snapshot' {
+                $manifestText = "schemaVersion: 1`r`nprofiles: []`r`npackages: []"
+                $policyText = $policyText.Replace("`n", "`r`n").TrimEnd("`r", "`n")
+                $manifestBytes = $utf8.GetBytes($manifestText)
+                $policyBytes = $utf8.GetBytes($policyText)
+                [IO.File]::WriteAllBytes($manifestPath, $manifestBytes)
+                [IO.File]::WriteAllBytes($policyPath, $policyBytes)
+
+                $snapshot = Read-WpaRunInputSnapshot -ManifestPath $manifestPath -PolicyPath $policyPath
+
+                $snapshot.manifestText | Should -BeExactly $manifestText
+                $snapshot.policyText | Should -BeExactly $policyText
+                [Convert]::ToHexString($utf8.GetBytes($snapshot.manifestText)) | Should -BeExactly ([Convert]::ToHexString($manifestBytes))
+                [Convert]::ToHexString($utf8.GetBytes($snapshot.policyText)) | Should -BeExactly ([Convert]::ToHexString($policyBytes))
+            }
+
+            It 'rejects non-canonical input bytes before environment inventory or manager probes' -ForEach @(
+                @{ Name='BOM'; Bytes=[byte[]](0xEF,0xBB,0xBF) + [Text.Encoding]::UTF8.GetBytes("schemaVersion: 1`nprofiles: []`npackages: []`n") }
+                @{ Name='invalid UTF-8'; Bytes=[byte[]](0xC3,0x28) }
+            ) {
+                [IO.File]::WriteAllBytes($manifestPath, $Bytes)
+                Mock Test-WpaEnvironmentForPolicy { throw 'ENVIRONMENT_PROBE_GUARD' }
+                Mock Get-WpaInventoryForPolicy { throw 'INVENTORY_PROBE_GUARD' }
+                Mock Test-WpaWingetAvailable { throw 'WINGET_PROBE_GUARD' }
+                Mock Test-WpaScoopAvailable { throw 'SCOOP_PROBE_GUARD' }
+
+                { New-WpaRunPreparation -ManifestPath $manifestPath -PolicyPath $policyPath -RunId '20260809-010203-aabbccdd' } |
+                    Should -Throw 'INPUT_UTF8_INVALID'
+
+                Should -Invoke Test-WpaEnvironmentForPolicy -Times 0 -Exactly
+                Should -Invoke Get-WpaInventoryForPolicy -Times 0 -Exactly
+                Should -Invoke Test-WpaWingetAvailable -Times 0 -Exactly
+                Should -Invoke Test-WpaScoopAvailable -Times 0 -Exactly
             }
 
             It 'stops before inventory and planning when the policy environment is not ready' {
@@ -337,9 +466,9 @@ Describe 'WinPkgAgent run workspace boundaries' {
 
                 [object]::ReferenceEquals($run, $script:preparation.run) | Should -BeTrue
                 $final = Join-Path $workspace "runs/$($run.runId)"
-                [IO.File]::ReadAllText((Join-Path $final 'manifest.yaml')) | Should -BeExactly $script:preparation.manifestText
-                [IO.File]::ReadAllText((Join-Path $final 'policy.yaml')) | Should -BeExactly $script:preparation.policyText
-                [IO.File]::ReadAllText((Join-Path $final 'profiles/base.yaml')) | Should -BeExactly $script:preparation.profiles[0].text
+                [Convert]::ToHexString([IO.File]::ReadAllBytes((Join-Path $final 'manifest.yaml'))) | Should -BeExactly ([Convert]::ToHexString([Text.UTF8Encoding]::new($false).GetBytes($script:preparation.manifestText)))
+                [Convert]::ToHexString([IO.File]::ReadAllBytes((Join-Path $final 'policy.yaml'))) | Should -BeExactly ([Convert]::ToHexString([Text.UTF8Encoding]::new($false).GetBytes($script:preparation.policyText)))
+                [Convert]::ToHexString([IO.File]::ReadAllBytes((Join-Path $final 'profiles/base.yaml'))) | Should -BeExactly ([Convert]::ToHexString([Text.UTF8Encoding]::new($false).GetBytes($script:preparation.profiles[0].text)))
                 foreach ($artifact in @('run.json','inventory.json','plan.json','plan.md')) {
                     Test-Path (Join-Path $final $artifact) | Should -BeTrue
                 }
@@ -566,6 +695,50 @@ Describe 'WinPkgAgent run workspace boundaries' {
 
                 [IO.File]::ReadAllText($manifestPath) | Should -BeExactly 'foreign-manifest'
                 Test-Path (Join-Path $workspace "runs/$($script:preparedRun.runId)") | Should -BeFalse
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
+            It 'never publishes a completed staged child replaced with different valid content before rename' {
+                $workspace = Join-Path $TestDrive 'workspace-child-content-replacement'
+                $staging = Join-Path $workspace "runs/.staging-$($script:preparedRun.runId)"
+                $manifestPath = Join-Path $staging 'manifest.yaml'
+                $replacement = "# replaced after write`nschemaVersion: 1`nprofiles:`n  - base`npackages: []`n"
+                Mock Assert-WpaPlanIntegrity {
+                    [IO.File]::Delete($manifestPath)
+                    [IO.File]::WriteAllText($manifestPath, $replacement, [Text.UTF8Encoding]::new($false))
+                    $true
+                }
+                Mock Remove-Item {}
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw 'PREVIEW_STAGING_PRESERVED'
+
+                Test-Path (Join-Path $workspace "runs/$($script:preparedRun.runId)") | Should -BeFalse
+                [IO.File]::ReadAllText($manifestPath) | Should -BeExactly $replacement
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
+            It 'rolls post-rename content replacement back to handle-bound staging evidence' {
+                $workspace = Join-Path $TestDrive 'workspace-post-rename-replacement'
+                $runs = Join-Path $workspace 'runs'
+                $final = Join-Path $runs $script:preparedRun.runId
+                $replacement = "# replaced after rename`nschemaVersion: 1`nprofiles:`n  - base`npackages: []`n"
+                Mock Move-WpaOwnedRunStagingDirectory {
+                    param($Ownership, $FinalPath)
+                    $Ownership.DirectoryHandle.Rename([IO.Path]::GetFullPath($FinalPath))
+                    $manifestPath = Join-Path $FinalPath 'manifest.yaml'
+                    [IO.File]::Delete($manifestPath)
+                    [IO.File]::WriteAllText($manifestPath, $replacement, [Text.UTF8Encoding]::new($false))
+                }
+                Mock Remove-Item {}
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw 'PREVIEW_STAGING_PRESERVED'
+
+                Test-Path $final | Should -BeFalse
+                $evidence = @(Get-ChildItem -LiteralPath $runs -Directory -Filter ".staging-evidence-$($script:preparedRun.runId)-*")
+                $evidence.Count | Should -Be 1
+                [IO.File]::ReadAllText((Join-Path $evidence[0].FullName 'manifest.yaml')) | Should -BeExactly $replacement
                 Should -Invoke Remove-Item -Times 0 -Exactly
             }
 

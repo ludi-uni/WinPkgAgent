@@ -11,7 +11,14 @@ function Read-WpaTextFile {
     if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Reparse-point input files are not accepted.' }
     $cursor=Split-Path $resolved -Parent
     while($cursor){$ancestor=Get-Item -LiteralPath $cursor -Force;if(($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Inputs beneath reparse-point directories are not accepted.'};$next=Split-Path $cursor -Parent;if($next -eq $cursor){break};$cursor=$next}
-    return [IO.File]::ReadAllText($resolved, [Text.UTF8Encoding]::new($false, $true))
+    $bytes = [IO.File]::ReadAllBytes($resolved)
+    if ($bytes.Length -gt $MaxBytes) { throw 'Input file is not a regular file within the size limit.' }
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { throw 'INPUT_UTF8_INVALID' }
+    try {
+        return [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
+    } catch [Text.DecoderFallbackException] {
+        throw 'INPUT_UTF8_INVALID'
+    }
 }
 
 function Read-WpaJsonFile {

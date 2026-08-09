@@ -405,6 +405,8 @@ function New-WpaRunStagingOwnership {
             DirectoryHandle = $directoryHandle
             OwnedFiles = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
             OwnedDirectories = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            ExpectedFileHashes = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+            ExpectedDirectories = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         }
         return $ownership
     } catch {
@@ -427,6 +429,7 @@ function Write-WpaOwnedStagingText {
         throw 'Owned staging target escapes the staging directory.'
     }
     if (Test-Path -LiteralPath $fullPath -ErrorAction Stop) { throw 'Owned staging target already exists.' }
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($Text)
     $stream = $null
     try {
         $stream = [IO.FileStream]::new(
@@ -437,7 +440,6 @@ function Write-WpaOwnedStagingText {
             4096,
             [IO.FileOptions]::WriteThrough
         )
-        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($Text)
         $stream.Write($bytes, 0, $bytes.Length)
         $stream.Flush($true)
     } finally {
@@ -445,6 +447,13 @@ function Write-WpaOwnedStagingText {
     }
     $item = Get-Item -LiteralPath $fullPath -Force -ErrorAction Stop
     if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Owned staging target is not trusted.' }
+    $relativePath = [IO.Path]::GetRelativePath($Ownership.StagingPath, $fullPath).Replace('\', '/')
+    if ([IO.Path]::IsPathFullyQualified($relativePath) -or $relativePath -eq '..' -or $relativePath.StartsWith('../', [StringComparison]::Ordinal)) {
+        throw 'Owned staging target escapes the staging directory.'
+    }
+    if ($Ownership.ExpectedFileHashes.ContainsKey($relativePath)) { throw 'Owned staging target was recorded twice.' }
+    $expectedHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+    $Ownership.ExpectedFileHashes.Add($relativePath, $expectedHash)
     $Ownership.OwnedFiles.Add($fullPath) | Out-Null
 }
 
@@ -457,35 +466,54 @@ function Write-WpaOwnedStagingJson {
 
 function Assert-WpaOwnedStagingContents {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][object]$Ownership,[switch]$OwnershipReleased)
+    param([Parameter(Mandatory)][object]$Ownership,[string]$BasePath=$Ownership.StagingPath,[switch]$OwnershipReleased)
 
+    $baseFull = [IO.Path]::GetFullPath($BasePath)
     if ($OwnershipReleased) {
-        Assert-WpaTrustedPublicationAncestry -WorkspacePath $Ownership.WorkspacePath -RunsPath $Ownership.RunsPath -StagingPath $Ownership.StagingPath -StagingMustExist | Out-Null
+        if ($null -eq $Ownership.DirectoryHandle -or -not $Ownership.DirectoryHandle.IsOpen) { throw 'Owned directory handle is not available.' }
+        $baseItem = Get-Item -LiteralPath $baseFull -Force -ErrorAction Stop
+        if (-not $baseItem.PSIsContainer -or ($baseItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            -not [string]::Equals($baseItem.Parent.FullName, $Ownership.RunsPath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Published owned directory path is not trusted.'
+        }
     } else {
         Assert-WpaOwnedRunStagingTrust -Ownership $Ownership | Out-Null
+        if (-not [string]::Equals($baseFull, $Ownership.StagingPath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Owned staging validation path changed unexpectedly.'
+        }
     }
     $seenFiles = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $seenDirectories = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($entry in @(Get-ChildItem -LiteralPath $Ownership.StagingPath -Force -ErrorAction Stop)) {
+    foreach ($entry in @(Get-ChildItem -LiteralPath $baseFull -Force -ErrorAction Stop)) {
         if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Unowned staging content detected.' }
-        if ([string]::Equals($entry.FullName, $Ownership.MarkerPath, [StringComparison]::OrdinalIgnoreCase)) {
+        $relativePath = [IO.Path]::GetRelativePath($baseFull, $entry.FullName).Replace('\', '/')
+        if ([string]::Equals($relativePath, '.wpa-staging-owner', [StringComparison]::OrdinalIgnoreCase)) {
             if ($OwnershipReleased) { throw 'Released ownership marker remains.' }
             continue
         }
         if ($entry.PSIsContainer) {
-            if (-not $Ownership.OwnedDirectories.Contains($entry.FullName)) { throw 'Unowned staging content detected.' }
-            $seenDirectories.Add($entry.FullName) | Out-Null
+            if (-not $Ownership.ExpectedDirectories.Contains($relativePath)) { throw 'Unowned staging content detected.' }
+            $seenDirectories.Add($relativePath) | Out-Null
             foreach ($child in @(Get-ChildItem -LiteralPath $entry.FullName -Force -ErrorAction Stop)) {
+                $childRelativePath = [IO.Path]::GetRelativePath($baseFull, $child.FullName).Replace('\', '/')
                 if ($child.PSIsContainer -or ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-                    -not $Ownership.OwnedFiles.Contains($child.FullName)) { throw 'Unowned staging content detected.' }
-                $seenFiles.Add($child.FullName) | Out-Null
+                    -not $Ownership.ExpectedFileHashes.ContainsKey($childRelativePath)) { throw 'Unowned staging content detected.' }
+                $childHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($child.FullName))).ToLowerInvariant()
+                if (-not [string]::Equals($childHash, $Ownership.ExpectedFileHashes[$childRelativePath], [StringComparison]::Ordinal)) {
+                    throw 'Owned staging content changed unexpectedly.'
+                }
+                $seenFiles.Add($childRelativePath) | Out-Null
             }
         } else {
-            if (-not $Ownership.OwnedFiles.Contains($entry.FullName)) { throw 'Unowned staging content detected.' }
-            $seenFiles.Add($entry.FullName) | Out-Null
+            if (-not $Ownership.ExpectedFileHashes.ContainsKey($relativePath)) { throw 'Unowned staging content detected.' }
+            $entryHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($entry.FullName))).ToLowerInvariant()
+            if (-not [string]::Equals($entryHash, $Ownership.ExpectedFileHashes[$relativePath], [StringComparison]::Ordinal)) {
+                throw 'Owned staging content changed unexpectedly.'
+            }
+            $seenFiles.Add($relativePath) | Out-Null
         }
     }
-    if ($seenFiles.Count -ne $Ownership.OwnedFiles.Count -or $seenDirectories.Count -ne $Ownership.OwnedDirectories.Count) {
+    if ($seenFiles.Count -ne $Ownership.ExpectedFileHashes.Count -or $seenDirectories.Count -ne $Ownership.ExpectedDirectories.Count) {
         throw 'Owned staging content changed unexpectedly.'
     }
     return $true
@@ -522,6 +550,28 @@ function Move-WpaOwnedRunStagingDirectory {
         throw 'Owned staging directory identity is unavailable.'
     }
     $Ownership.DirectoryHandle.Rename([IO.Path]::GetFullPath($FinalPath))
+}
+
+function Move-WpaOwnedRunToStagingEvidence {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$Ownership,[Parameter(Mandatory)][string]$RunId)
+
+    if ($null -eq $Ownership.DirectoryHandle -or -not $Ownership.DirectoryHandle.IsOpen) {
+        throw 'Owned staging directory identity is unavailable.'
+    }
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        $leaf = ".staging-evidence-$RunId-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+        $evidencePath = [IO.Path]::GetFullPath((Join-Path $Ownership.RunsPath $leaf))
+        if (-not [string]::Equals([IO.Path]::GetDirectoryName($evidencePath), $Ownership.RunsPath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Owned staging evidence path is not trusted.'
+        }
+        try {
+            $Ownership.DirectoryHandle.Rename($evidencePath)
+            return $evidencePath
+        } catch {
+            if ($attempt -eq 2) { throw 'Owned staging evidence could not be preserved.' }
+        }
+    }
 }
 
 function Assert-WpaStagingOwnershipMarkerReleased {
@@ -590,6 +640,7 @@ function Publish-WpaPreparedRun {
                 throw 'Profile snapshot directory is not trusted.'
             }
             $ownership.OwnedDirectories.Add($profilesPath) | Out-Null
+            $ownership.ExpectedDirectories.Add('profiles') | Out-Null
             foreach ($profileWrite in $profileWrites) {
                 Write-WpaOwnedStagingText -Ownership $ownership -Path $profileWrite.Path -Text $profileWrite.Text
             }
@@ -606,6 +657,12 @@ function Publish-WpaPreparedRun {
         $ownership.Stream = $null
         Assert-WpaStagingOwnershipMarkerReleased -Ownership $ownership | Out-Null
         Move-WpaOwnedRunStagingDirectory -Ownership $ownership -FinalPath $finalPath
+        try {
+            Assert-WpaOwnedStagingContents -Ownership $ownership -BasePath $finalPath -OwnershipReleased | Out-Null
+        } catch {
+            Move-WpaOwnedRunToStagingEvidence -Ownership $ownership -RunId $runId | Out-Null
+            throw 'PREVIEW_STAGING_PRESERVED'
+        }
         return $finalPath
     } catch {
         if ($stagingCreated) {

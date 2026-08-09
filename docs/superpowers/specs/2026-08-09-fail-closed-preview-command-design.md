@@ -116,14 +116,7 @@ inventoryは一度だけ取得し、その同一snapshotをplanとrun artifact�
 
 prepare成功後だけ、`<workspace>/runs`配下へ一意なstaging runディレクトリを作る。固定artifact名でmanifest、policy、profile、inventory、plan、plan markdown、run metadataを書き込み、schemaと固定pathを再検証してから最終run IDのディレクトリへ公開する。
 
-publish失敗時は、この呼出しが新規作成したstagingディレクトリだけを削除する。削除前に次をすべて検査する。
-
-- stagingの親が解決済み`runs`ディレクトリと完全一致する
-- staging名が今回生成した一意な名前と完全一致する
-- traversalまたはreparse pointがない
-- 既存runやworkspace rootを対象にしていない
-
-このcleanupはパッケージ削除や任意path削除ではなく、未公開の自前staging artifactだけに限定する。cleanup自体に失敗した場合は成功を返さず、staging残留を明示的に報告する。
+> **Superseding amendment (2026-08-09):** この段落は、承認済みの[Task 4 plan amendment](../plans/2026-08-09-fail-closed-preview-command-plan.md#task-4-publish-prepared-runs-atomically-with-preserved-failure-evidence)により置き換える。staging取得後の失敗では、所有handleだけを閉じ、失敗証跡を保存して`PREVIEW_STAGING_PRESERVED`を返す。lexical pathによる削除、再帰削除、cleanupは行わない。公開後の内容検証に失敗した場合も、保持中のdirectory handleで所有ディレクトリobjectを安全なstaging-evidence名へrenameして保存し、同じ固定errorでfail closedする。
 
 ## policy伝播
 

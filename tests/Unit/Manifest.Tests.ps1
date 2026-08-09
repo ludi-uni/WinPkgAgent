@@ -167,6 +167,26 @@ Describe 'manifest semantic validation contract' {
         InModuleScope WinPkgAgent -Parameters @{ InputPath=$path } { param($InputPath); { Read-WpaTextFile -Path $InputPath -MaxBytes 8 } | Should -Throw }
     }
 
+    It 'rejects a UTF-8 BOM with a stable sanitized error' {
+        $path = Join-Path $TestDrive 'bom.yaml'
+        [IO.File]::WriteAllBytes($path, [byte[]](0xEF,0xBB,0xBF,0x61))
+
+        InModuleScope WinPkgAgent -Parameters @{ InputPath=$path } {
+            param($InputPath)
+            { Read-WpaTextFile -Path $InputPath } | Should -Throw 'INPUT_UTF8_INVALID'
+        }
+    }
+
+    It 'rejects invalid UTF-8 with the same stable sanitized error' {
+        $path = Join-Path $TestDrive 'invalid-utf8.yaml'
+        [IO.File]::WriteAllBytes($path, [byte[]](0xC3,0x28))
+
+        InModuleScope WinPkgAgent -Parameters @{ InputPath=$path } {
+            param($InputPath)
+            { Read-WpaTextFile -Path $InputPath } | Should -Throw 'INPUT_UTF8_INVALID'
+        }
+    }
+
     It 'rejects unknown policy values' {
         InModuleScope WinPkgAgent {
             $policy = [pscustomobject]@{ schemaVersion = 1; allowUninstall = $false; requireApproval = $true; unknownVersionHandling = 'allow'; rejectStateChanges = $true; rebootHandling = 'record-only'; maxOperations = 10; operationTimeoutSeconds = 60 }
