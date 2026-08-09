@@ -28,6 +28,11 @@ Describe 'WinPkgAgent planning' {
                 packages=@(); warnings=@(); collectedAt='2026-01-01T00:00:00Z'
             }
             $now = [datetimeoffset]'2026-01-02T03:04:05+00:00'
+            Mock Read-WpaManifestResolved { throw 'FILE_READ_GUARD: manifest reader invoked' }
+            Mock Read-WpaPolicyFile { throw 'FILE_READ_GUARD: policy reader invoked' }
+            Mock Read-WpaJsonFile { throw 'FILE_READ_GUARD: inventory reader invoked' }
+            Mock Write-WpaAtomicJson { throw 'FILE_WRITE_GUARD: JSON writer invoked' }
+            Mock Write-WpaAtomicText { throw 'FILE_WRITE_GUARD: text writer invoked' }
 
             $plan = New-WpaPlanObject -Manifest $manifest -Policy $policy -Inventory $inventory -Now $now
 
@@ -43,6 +48,11 @@ Describe 'WinPkgAgent planning' {
             $plan.inventoryHash | Should -Match '^[a-f0-9]{64}$'
             $plan.contentHash | Should -Match '^[a-f0-9]{64}$'
             $plan.planHash | Should -Match '^[a-f0-9]{64}$'
+            Assert-MockCalled Read-WpaManifestResolved -Times 0
+            Assert-MockCalled Read-WpaPolicyFile -Times 0
+            Assert-MockCalled Read-WpaJsonFile -Times 0
+            Assert-MockCalled Write-WpaAtomicJson -Times 0
+            Assert-MockCalled Write-WpaAtomicText -Times 0
         }
 
         It 'plans an install with a stable reason code' {
