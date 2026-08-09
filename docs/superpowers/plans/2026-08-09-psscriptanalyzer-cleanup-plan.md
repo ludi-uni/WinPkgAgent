@@ -262,9 +262,9 @@ Invoke-Pester -Path ./tests/Unit/Workspace.Tests.ps1 -FullNameFilter '*ownership
 
 Expected: FAIL because the renamed private functions do not yet exist.
 
-- [ ] **Step 2: Rename the two private helpers and remove the unused removal stub**
+- [ ] **Step 2: Rename the private helpers, including the preservation-only removal stub**
 
-Rename only `Assert-WpaOwnedStagingContents` and `Close-WpaRunStagingOwnershipHandles` plus their exact call sites. Delete `Remove-WpaOwnedRunStagingDirectory`, which is private, unreferenced, never removes a directory, and always throws `PREVIEW_STAGING_PRESERVED`.
+Rename `Assert-WpaOwnedStagingContents` and `Close-WpaRunStagingOwnershipHandles` plus their exact call sites. Four safety tests directly exercise the preservation-only `Remove-WpaOwnedRunStagingDirectory`; retain that coverage under the accurate private name `Protect-WpaOwnedRunStagingDirectory`. It still performs zero deletion and always throws `PREVIEW_STAGING_PRESERVED`.
 
 - [ ] **Step 3: Replace empty cleanup catches with bounded diagnostics**
 
@@ -295,7 +295,7 @@ Expected: all Workspace tests pass, including publication tamper/reparse/failure
 
 ---
 
-### Task 5: Preserve delegated and custom WhatIf contracts with explicit suppressions
+### Task 5: Preserve delegated and custom WhatIf contracts with minimal suppressions
 
 **Files:**
 - Modify: `src/WinPkgAgent/Private/Workspace.ps1`
@@ -318,12 +318,11 @@ Invoke-Pester -Path ./tests/Unit/ApprovalExecution.Tests.ps1,./tests/Unit/Worksp
 
 Expected: PASS; these tests lock the behavior that analyzer-only edits must not change.
 
-- [ ] **Step 2: Attach three narrow suppressions**
+- [ ] **Step 2: Attach only the two remaining narrow suppressions**
 
-Use function-scoped attributes with these rule/intent pairs:
+After `Set-WpaRunStage` gains real `ShouldProcess`, rerun the analyzer. `Approve-WpaRun` no longer needs a suppression because its warning is resolved by the implementation. Use function-scoped attributes only for the two remaining rule/intent pairs:
 
 ```text
-Approve-WpaRun     -> PSShouldProcess: delegates to Approve-WpaPlan and stages only after non-WhatIf approval
 Invoke-WpaRun      -> PSUseSupportsShouldProcess: explicit WhatIf means trusted preflight, not native mutation simulation
 Invoke-WpaCliPreview -> PSUseSupportsShouldProcess: wrapper forwards explicit projection-only WhatIf to New-WpaRun
 ```
