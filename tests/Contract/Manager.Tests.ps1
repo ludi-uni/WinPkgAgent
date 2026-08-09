@@ -106,7 +106,7 @@ Describe 'manager contract parsers' {
     It 'keeps a manager unavailable when no allowed candidate exists' {
         InModuleScope WinPkgAgent {
             Mock Get-Command { $null }
-            Mock Test-Path { $false }
+            Mock Get-AppxPackage { @() }
             Resolve-WpaManagerExecutable -Manager winget | Should -BeNullOrEmpty
         }
     }
