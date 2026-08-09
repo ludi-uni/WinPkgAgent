@@ -44,6 +44,16 @@ WinGetのexportに含まれないインストール済み項目も、別の保�
   -OutputPath ./artifacts/unmanaged-candidate.json
 ```
 
+管理された実行コンテキストからApp Installerが見えない場合は、`PATH`、AppX権限、所有権を変更せず、通常ユーザーのPowerShell 7から同じpolicyを明示してinventoryを取得します。
+
+```powershell
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -File ./scripts/winpkg-agent.ps1 inventory `
+  -PolicyPath ./config/policy.desktop.yaml `
+  -OutputPath ./artifacts/migration-inventory.json
+```
+
+このCLIはpackage managerの実体を任意パスで差し替えるパラメーターを公開していません。通常ユーザー環境でもmanagerを検証できない場合は `partial` / `failed` のまま扱い、planやapplyへ進まないでください。WinPkgAgentは`PATH`、AppX権限、所有権を変更しません。
+
 一覧形式が未知または途中で壊れている場合は、推測せず `partial` / `failed` として記録します。WinGetにはsource同意やパッケージ変更の引数を渡しません。
 
 `policy.codex.yaml` でWinGetを宣言した項目は `MANAGER_NOT_ALLOWED` でblockedになり、Scoopへfallback/remapしません。PATH、実行ポリシー、App Installer/OS policyを変更せず、昇格、manager導入、承認バイパスも行いません。`MANAGER_UNAVAILABLE` は許可managerの利用不可、`INVENTORY_SCOPE_MISMATCH` はpolicy hashまたはscopeの不一致です。

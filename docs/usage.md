@@ -62,6 +62,16 @@ With `policy.codex.yaml`, a manifest item declared for WinGet is blocked as `MAN
 
 Use `Export-WpaUnmanagedCandidate -InventoryPath ./artifacts/inventory.json -OutputPath ./artifacts/unmanaged-candidate.json` to record WinGet list entries that are not present in the export inventory. The JSON artifact is review-only; source-less ARP/MSIX identifiers remain `manual-mapping` and are never promoted automatically.
 
+If App Installer is unavailable in a managed execution context, do not change `PATH`, AppX permissions, or ownership. Run inventory from the regular user's PowerShell 7 with the same explicit policy:
+
+```powershell
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -File ./scripts/winpkg-agent.ps1 inventory `
+  -PolicyPath ./config/policy.desktop.yaml `
+  -OutputPath ./artifacts/migration-inventory.json
+```
+
+The CLI does not expose arbitrary package-manager executable path overrides. If the manager still cannot be verified in the regular user context, retain the `partial` / `failed` result and stop before plan or apply. WinPkgAgent does not change `PATH`, AppX permissions, or ownership.
+
 ## PowerShell runtime diagnostics
 
 `Test-WpaEnvironment -PowerShellPath 'D:\Tools\PowerShell\7\pwsh.exe'` applies an absolute path for the current invocation only. A policy may contain `runtime.powershellPath` for a configured absolute path. Invalid explicit paths fail closed and do not fall back silently. The runtime probe uses `-NoLogo -NoProfile -NonInteractive` and validates JSON `PSEdition` and `PSVersion`.
