@@ -1,3 +1,127 @@
+if (-not ('WinPkgAgent.Native.OwnedDirectoryHandle' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace WinPkgAgent.Native
+{
+    public sealed class OwnedDirectoryHandle : IDisposable
+    {
+        private const uint DeleteAccess = 0x00010000;
+        private const uint ReadAttributesAccess = 0x00000080;
+        private const uint OpenExisting = 3;
+        private const uint BackupSemantics = 0x02000000;
+        private const int FileRenameInfo = 3;
+        private SafeFileHandle handle;
+
+        private OwnedDirectoryHandle(SafeFileHandle handle)
+        {
+            this.handle = handle;
+        }
+
+        public bool IsOpen
+        {
+            get { return handle != null && !handle.IsInvalid && !handle.IsClosed; }
+        }
+
+        public static OwnedDirectoryHandle Create(string path, out bool directoryCreated)
+        {
+            directoryCreated = false;
+            if (!CreateDirectoryW(path, IntPtr.Zero))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            directoryCreated = true;
+
+            SafeFileHandle directoryHandle = CreateFileW(
+                path,
+                DeleteAccess | ReadAttributesAccess,
+                FileShare.Read | FileShare.Write | FileShare.Delete,
+                IntPtr.Zero,
+                OpenExisting,
+                BackupSemantics,
+                IntPtr.Zero);
+            if (directoryHandle.IsInvalid)
+            {
+                int error = Marshal.GetLastWin32Error();
+                directoryHandle.Dispose();
+                throw new Win32Exception(error);
+            }
+            return new OwnedDirectoryHandle(directoryHandle);
+        }
+
+        public void Rename(string destinationPath)
+        {
+            if (!IsOpen)
+            {
+                throw new InvalidOperationException("Directory ownership handle is closed.");
+            }
+
+            byte[] destinationBytes = System.Text.Encoding.Unicode.GetBytes(destinationPath);
+            int rootOffset = IntPtr.Size == 8 ? 8 : 4;
+            int lengthOffset = rootOffset + IntPtr.Size;
+            int nameOffset = lengthOffset + sizeof(uint);
+            int bufferLength = nameOffset + destinationBytes.Length + sizeof(char);
+            IntPtr buffer = Marshal.AllocHGlobal(bufferLength);
+            try
+            {
+                for (int offset = 0; offset < nameOffset; offset += sizeof(int))
+                {
+                    Marshal.WriteInt32(buffer, offset, 0);
+                }
+                Marshal.WriteIntPtr(buffer, rootOffset, IntPtr.Zero);
+                Marshal.WriteInt32(buffer, lengthOffset, destinationBytes.Length);
+                Marshal.Copy(destinationBytes, 0, IntPtr.Add(buffer, nameOffset), destinationBytes.Length);
+                Marshal.WriteInt16(buffer, nameOffset + destinationBytes.Length, 0);
+                if (!SetFileInformationByHandle(handle, FileRenameInfo, buffer, (uint)bufferLength))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (handle != null)
+            {
+                handle.Dispose();
+                handle = null;
+            }
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CreateDirectoryW(string path, IntPtr securityAttributes);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(
+            string fileName,
+            uint desiredAccess,
+            FileShare shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetFileInformationByHandle(
+            SafeFileHandle fileHandle,
+            int fileInformationClass,
+            IntPtr fileInformation,
+            uint bufferSize);
+    }
+}
+'@
+}
+
 function Resolve-WpaTrustedWorkspacePath {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$WorkspacePath)
@@ -76,13 +200,15 @@ function Test-WpaStagingOwnershipIdentity {
     param([AllowNull()][object]$Ownership)
 
     try {
-        if ($null -eq $Ownership -or $null -eq $Ownership.Stream -or -not $Ownership.Stream.CanRead) { return $false }
+        if ($null -eq $Ownership -or $null -eq $Ownership.Stream -or -not $Ownership.Stream.CanRead -or
+            $Ownership.PSObject.Properties.Name -notcontains 'DirectoryHandle' -or $null -eq $Ownership.DirectoryHandle -or
+            -not $Ownership.DirectoryHandle.IsOpen) { return $false }
         $stagingFull = [IO.Path]::GetFullPath([string]$Ownership.StagingPath)
         $runsFull = [IO.Path]::GetFullPath([string]$Ownership.RunsPath)
         $markerFull = [IO.Path]::GetFullPath([string]$Ownership.MarkerPath)
         if (-not [string]::Equals([IO.Path]::GetDirectoryName($stagingFull), $runsFull, [StringComparison]::OrdinalIgnoreCase) -or
             -not [string]::Equals([IO.Path]::GetFileName($stagingFull), [string]$Ownership.ExpectedLeaf, [StringComparison]::Ordinal) -or
-            -not [string]::Equals($markerFull, (Join-Path $stagingFull '.wpa-staging-owner'), [StringComparison]::OrdinalIgnoreCase)) {
+            -not [string]::Equals($markerFull, ([IO.Path]::Combine($stagingFull, '.wpa-staging-owner')), [StringComparison]::OrdinalIgnoreCase)) {
             return $false
         }
         $position = $Ownership.Stream.Position
@@ -127,10 +253,14 @@ function New-WpaRunStagingOwnership {
     if (Test-Path -LiteralPath $stagingFull -ErrorAction Stop) { throw 'Run staging workspace already exists.' }
 
     $stream = $null
+    $directoryHandle = $null
+    $directoryCreated = $false
     try {
-        [IO.Directory]::CreateDirectory($stagingFull) | Out-Null
+        [IO.Directory]::CreateDirectory($runsFull) | Out-Null
+        Assert-WpaTrustedPublicationAncestry -WorkspacePath $workspaceFull -RunsPath $runsFull -StagingPath $stagingFull | Out-Null
+        $directoryHandle = [WinPkgAgent.Native.OwnedDirectoryHandle]::Create($stagingFull, [ref]$directoryCreated)
         Assert-WpaTrustedPublicationAncestry -WorkspacePath $workspaceFull -RunsPath $runsFull -StagingPath $stagingFull -StagingMustExist | Out-Null
-        $markerPath = Join-Path $stagingFull '.wpa-staging-owner'
+        $markerPath = [IO.Path]::Combine($stagingFull, '.wpa-staging-owner')
         $token = [guid]::NewGuid().ToString('N')
         $stream = [IO.FileStream]::new(
             $markerPath,
@@ -156,12 +286,15 @@ function New-WpaRunStagingOwnership {
             MarkerPath = $markerPath
             Token = $token
             Stream = $stream
+            DirectoryHandle = $directoryHandle
             OwnedFiles = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
             OwnedDirectories = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         }
         return $ownership
     } catch {
         if ($null -ne $stream) { $stream.Dispose() }
+        if ($null -ne $directoryHandle) { $directoryHandle.Dispose() }
+        if ($directoryCreated) { throw 'PREVIEW_STAGING_PRESERVED' }
         throw 'PREVIEW_STAGING_OWNERSHIP_NOT_ACQUIRED'
     }
 }
@@ -172,8 +305,28 @@ function Write-WpaOwnedStagingText {
 
     Assert-WpaOwnedRunStagingTrust -Ownership $Ownership | Out-Null
     $fullPath = [IO.Path]::GetFullPath($Path)
+    $parentPath = [IO.Path]::GetDirectoryName($fullPath)
+    if (-not [string]::Equals($parentPath, $Ownership.StagingPath, [StringComparison]::OrdinalIgnoreCase) -and
+        -not $Ownership.OwnedDirectories.Contains($parentPath)) {
+        throw 'Owned staging target escapes the staging directory.'
+    }
     if (Test-Path -LiteralPath $fullPath -ErrorAction Stop) { throw 'Owned staging target already exists.' }
-    Write-WpaAtomicText -Path $fullPath -Text $Text
+    $stream = $null
+    try {
+        $stream = [IO.FileStream]::new(
+            $fullPath,
+            [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::Write,
+            [IO.FileShare]::Read,
+            4096,
+            [IO.FileOptions]::WriteThrough
+        )
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($Text)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
     $item = Get-Item -LiteralPath $fullPath -Force -ErrorAction Stop
     if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Owned staging target is not trusted.' }
     $Ownership.OwnedFiles.Add($fullPath) | Out-Null
@@ -183,13 +336,7 @@ function Write-WpaOwnedStagingJson {
     [CmdletBinding()]
     param([Parameter(Mandatory)][object]$Ownership,[Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)][object]$Data)
 
-    Assert-WpaOwnedRunStagingTrust -Ownership $Ownership | Out-Null
-    $fullPath = [IO.Path]::GetFullPath($Path)
-    if (Test-Path -LiteralPath $fullPath -ErrorAction Stop) { throw 'Owned staging target already exists.' }
-    Write-WpaAtomicJson -Path $fullPath -Data $Data
-    $item = Get-Item -LiteralPath $fullPath -Force -ErrorAction Stop
-    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Owned staging target is not trusted.' }
-    $Ownership.OwnedFiles.Add($fullPath) | Out-Null
+    Write-WpaOwnedStagingText -Ownership $Ownership -Path $Path -Text (($Data | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
 }
 
 function Assert-WpaOwnedStagingContents {
@@ -228,59 +375,45 @@ function Assert-WpaOwnedStagingContents {
     return $true
 }
 
+function Close-WpaRunStagingOwnershipHandles {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$Ownership)
+
+    if ($null -ne $Ownership.Stream) {
+        try { $Ownership.Stream.Dispose() } catch { }
+        $Ownership.Stream = $null
+    }
+    if ($Ownership.PSObject.Properties.Name -contains 'DirectoryHandle' -and $null -ne $Ownership.DirectoryHandle) {
+        try { $Ownership.DirectoryHandle.Dispose() } catch { }
+        $Ownership.DirectoryHandle = $null
+    }
+}
+
 function Remove-WpaOwnedRunStagingDirectory {
     [CmdletBinding()]
     param([Parameter(Mandatory)][object]$Ownership)
 
-    if (-not (Test-WpaStagingOwnershipIdentity -Ownership $Ownership)) {
-        throw 'PREVIEW_STAGING_CLEANUP_FAILED: OWNERSHIP_NOT_PROVEN'
-    }
-    try {
-        Assert-WpaTrustedPublicationAncestry -WorkspacePath $Ownership.WorkspacePath -RunsPath $Ownership.RunsPath -StagingPath $Ownership.StagingPath -StagingMustExist | Out-Null
-    } catch {
-        throw 'PREVIEW_STAGING_CLEANUP_FAILED: UNTRUSTED_ANCESTRY'
-    }
-    try {
-        Assert-WpaOwnedStagingContents -Ownership $Ownership | Out-Null
-    } catch {
-        throw 'PREVIEW_STAGING_CLEANUP_FAILED: UNKNOWN_CONTENT'
-    }
+    Close-WpaRunStagingOwnershipHandles -Ownership $Ownership
+    throw 'PREVIEW_STAGING_PRESERVED'
+}
 
-    foreach ($ownedFile in @($Ownership.OwnedFiles | Sort-Object Length -Descending)) {
-        try {
-            Assert-WpaOwnedRunStagingTrust -Ownership $Ownership | Out-Null
-            $item = Get-Item -LiteralPath $ownedFile -Force -ErrorAction Stop
-            if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'owned file untrusted' }
-            Remove-Item -LiteralPath $ownedFile -Force -ErrorAction Stop
-        } catch {
-            throw 'PREVIEW_STAGING_CLEANUP_FAILED: DELETE_FAILED'
-        }
-    }
-    foreach ($ownedDirectory in @($Ownership.OwnedDirectories | Sort-Object Length -Descending)) {
-        try {
-            Assert-WpaOwnedRunStagingTrust -Ownership $Ownership | Out-Null
-            $item = Get-Item -LiteralPath $ownedDirectory -Force -ErrorAction Stop
-            if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-                @(Get-ChildItem -LiteralPath $ownedDirectory -Force -ErrorAction Stop).Count -ne 0) { throw 'owned directory untrusted' }
-            [IO.Directory]::Delete($ownedDirectory, $false)
-        } catch {
-            throw 'PREVIEW_STAGING_CLEANUP_FAILED: DELETE_FAILED'
-        }
-    }
+function Move-WpaOwnedRunStagingDirectory {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$Ownership,[Parameter(Mandatory)][string]$FinalPath)
 
-    try {
-        Assert-WpaOwnedRunStagingTrust -Ownership $Ownership | Out-Null
-        $Ownership.Stream.Dispose()
-        $Ownership.Stream = $null
-        if ([IO.File]::Exists($Ownership.MarkerPath)) { throw 'marker remains' }
-        Assert-WpaTrustedPublicationAncestry -WorkspacePath $Ownership.WorkspacePath -RunsPath $Ownership.RunsPath -StagingPath $Ownership.StagingPath -StagingMustExist | Out-Null
-        if (@(Get-ChildItem -LiteralPath $Ownership.StagingPath -Force -ErrorAction Stop).Count -ne 0) {
-            throw 'unowned content appeared'
-        }
-        [IO.Directory]::Delete($Ownership.StagingPath, $false)
-    } catch {
-        throw 'PREVIEW_STAGING_CLEANUP_FAILED: DELETE_FAILED'
+    if ($Ownership.PSObject.Properties.Name -notcontains 'DirectoryHandle' -or
+        $null -eq $Ownership.DirectoryHandle -or -not $Ownership.DirectoryHandle.IsOpen) {
+        throw 'Owned staging directory identity is unavailable.'
     }
+    $Ownership.DirectoryHandle.Rename([IO.Path]::GetFullPath($FinalPath))
+}
+
+function Assert-WpaStagingOwnershipMarkerReleased {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$Ownership)
+
+    if ([IO.File]::Exists($Ownership.MarkerPath)) { throw 'Staging ownership marker remains open.' }
+    return $true
 }
 
 function Invoke-WpaStagedPlanActionSetValidation {
@@ -322,9 +455,10 @@ function Publish-WpaPreparedRun {
     }
 
     $ownership = $null
-    $published = $false
+    $stagingCreated = $false
     try {
         $ownership = New-WpaRunStagingOwnership -WorkspacePath $workspace -RunsPath $runsPath -StagingPath $stagingPath -ExpectedLeaf $stagingLeaf
+        $stagingCreated = $true
         Write-WpaOwnedStagingText -Ownership $ownership -Path (Get-WpaRunArtifactPath $stagingPath manifest) -Text $Preparation.manifestText
         Write-WpaOwnedStagingText -Ownership $ownership -Path (Get-WpaRunArtifactPath $stagingPath policy) -Text $Preparation.policyText
         Write-WpaOwnedStagingJson -Ownership $ownership -Path (Get-WpaRunArtifactPath $stagingPath inventory) -Data $Preparation.inventory
@@ -354,22 +488,16 @@ function Publish-WpaPreparedRun {
         Assert-WpaOwnedStagingContents -Ownership $ownership | Out-Null
         $ownership.Stream.Dispose()
         $ownership.Stream = $null
-        if ([IO.File]::Exists($ownership.MarkerPath)) { throw 'PREVIEW_STAGING_MARKER_RELEASE_FAILED' }
-        Assert-WpaOwnedStagingContents -Ownership $ownership -OwnershipReleased | Out-Null
-        [IO.Directory]::Move($stagingPath, $finalPath)
-        $published = $true
+        Assert-WpaStagingOwnershipMarkerReleased -Ownership $ownership | Out-Null
+        Move-WpaOwnedRunStagingDirectory -Ownership $ownership -FinalPath $finalPath
         return $finalPath
     } catch {
-        $publicationError = $_
-        if ($null -ne $ownership -and -not $published) {
-            try {
-                Remove-WpaOwnedRunStagingDirectory -Ownership $ownership
-            } catch {
-                throw $_.Exception.Message
-            }
+        if ($stagingCreated) {
+            if ($null -ne $ownership) { Close-WpaRunStagingOwnershipHandles -Ownership $ownership }
+            throw 'PREVIEW_STAGING_PRESERVED'
         }
-        throw $publicationError
+        throw
     } finally {
-        if ($null -ne $ownership -and $null -ne $ownership.Stream) { $ownership.Stream.Dispose() }
+        if ($null -ne $ownership) { Close-WpaRunStagingOwnershipHandles -Ownership $ownership }
     }
 }

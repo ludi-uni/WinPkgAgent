@@ -360,20 +360,28 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Test-Path $workspace | Should -BeFalse
             }
 
-            It 'removes only its owned staging directory when publication fails' {
+            It 'preserves staging and unrelated content with a fixed sanitized error when publication fails' {
                 $workspace = Join-Path $TestDrive 'workspace-publication-failure'
                 $runs = Join-Path $workspace 'runs'
                 $unrelated = Join-Path $runs '.staging-unrelated'
                 [IO.Directory]::CreateDirectory($unrelated) | Out-Null
                 [IO.File]::WriteAllText((Join-Path $unrelated 'keep.txt'), 'keep')
-                Mock Write-WpaAtomicJson { throw 'simulated publication failure' } -ParameterFilter { $Path -like '*plan.json' }
+                Mock Write-WpaOwnedStagingJson { throw 'simulated publication failure' } -ParameterFilter { $Path -like '*plan.json' }
+                Mock Remove-Item {}
 
-                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
-                    Should -Throw 'simulated publication failure'
+                $message = try {
+                    Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace
+                    ''
+                } catch {
+                    $_.Exception.Message
+                }
 
+                $message | Should -BeExactly 'PREVIEW_STAGING_PRESERVED'
+                $message | Should -Not -Match ([regex]::Escape($TestDrive))
                 Test-Path (Join-Path $runs $script:preparedRun.runId) | Should -BeFalse
-                Test-Path (Join-Path $runs ".staging-$($script:preparedRun.runId)") | Should -BeFalse
+                Test-Path (Join-Path $runs ".staging-$($script:preparedRun.runId)") | Should -BeTrue
                 [IO.File]::ReadAllText((Join-Path $unrelated 'keep.txt')) | Should -BeExactly 'keep'
+                Should -Invoke Remove-Item -Times 0 -Exactly
             }
 
             It 'refuses a staging directory claimed by a competing exclusive owner and never deletes it' {
@@ -427,11 +435,11 @@ Describe 'WinPkgAgent run workspace boundaries' {
                         Parent = [pscustomobject]@{FullName=$workspace}
                     }
                 } -ParameterFilter { $LiteralPath -eq $runs }
-                Mock Write-WpaAtomicJson { throw 'simulated publication failure' } -ParameterFilter { $Path -like '*plan.json' }
+                Mock Write-WpaOwnedStagingJson { throw 'simulated publication failure' } -ParameterFilter { $Path -like '*plan.json' }
                 Mock Remove-Item {}
 
                 { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
-                    Should -Throw 'PREVIEW_STAGING_CLEANUP_FAILED: UNTRUSTED_ANCESTRY'
+                    Should -Throw 'PREVIEW_STAGING_PRESERVED'
 
                 [IO.Directory]::Exists($staging) | Should -BeTrue
                 Should -Invoke Remove-Item -Times 0 -Exactly
@@ -466,24 +474,79 @@ Describe 'WinPkgAgent run workspace boundaries' {
             It 'validates the staged plan before publishing the final directory' {
                 $workspace = Join-Path $TestDrive 'workspace-invalid-plan'
                 Mock Assert-WpaPlanIntegrity { throw 'STAGED_PLAN_INVALID' }
+                Mock Remove-Item {}
 
                 { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
-                    Should -Throw 'STAGED_PLAN_INVALID'
+                    Should -Throw 'PREVIEW_STAGING_PRESERVED'
 
                 Test-Path (Join-Path $workspace "runs/$($script:preparedRun.runId)") | Should -BeFalse
-                Test-Path (Join-Path $workspace "runs/.staging-$($script:preparedRun.runId)") | Should -BeFalse
+                Test-Path (Join-Path $workspace "runs/.staging-$($script:preparedRun.runId)") | Should -BeTrue
+                Should -Invoke Remove-Item -Times 0 -Exactly
             }
 
             It 'calls the action-set validator exactly once for an empty staged plan before move' {
                 $workspace = Join-Path $TestDrive 'workspace-empty-action-validation'
                 Mock Invoke-WpaStagedPlanActionSetValidation { throw 'EMPTY_ACTION_SET_VALIDATION_GUARD' }
+                Mock Remove-Item {}
 
                 { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
-                    Should -Throw 'EMPTY_ACTION_SET_VALIDATION_GUARD'
+                    Should -Throw 'PREVIEW_STAGING_PRESERVED'
 
                 Test-Path (Join-Path $workspace "runs/$($script:preparedRun.runId)") | Should -BeFalse
+                Test-Path (Join-Path $workspace "runs/.staging-$($script:preparedRun.runId)") | Should -BeTrue
                 Should -Invoke Invoke-WpaStagedPlanActionSetValidation -Times 1 -Exactly
                 Should -Invoke Assert-WpaPlanIntegrity -Times 0 -Exactly
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
+            It 'does not overwrite a file inserted at an owned staging target during publication' {
+                $workspace = Join-Path $TestDrive 'workspace-target-substitution'
+                $staging = Join-Path $workspace "runs/.staging-$($script:preparedRun.runId)"
+                $manifestPath = Join-Path $staging 'manifest.yaml'
+                $script:targetInserted = $false
+                Mock Test-Path {
+                    if (-not $script:targetInserted) {
+                        $script:targetInserted = $true
+                        [IO.File]::WriteAllText($manifestPath, 'foreign-manifest')
+                        return $false
+                    }
+                    [IO.File]::Exists($LiteralPath) -or [IO.Directory]::Exists($LiteralPath)
+                } -ParameterFilter { $LiteralPath -eq $manifestPath }
+                Mock Remove-Item {}
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw 'PREVIEW_STAGING_PRESERVED'
+
+                [IO.File]::ReadAllText($manifestPath) | Should -BeExactly 'foreign-manifest'
+                Test-Path (Join-Path $workspace "runs/$($script:preparedRun.runId)") | Should -BeFalse
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
+            It 'moves the owned directory object and never a deterministic staging-path replacement' {
+                $workspace = Join-Path $TestDrive 'workspace-directory-substitution'
+                $runs = Join-Path $workspace 'runs'
+                $staging = Join-Path $runs ".staging-$($script:preparedRun.runId)"
+                $displacedOwned = Join-Path $runs '.displaced-owned'
+                $foreignFile = Join-Path $staging 'foreign.txt'
+                $script:directorySubstituted = $false
+                Mock Assert-WpaStagingOwnershipMarkerReleased {
+                    if (-not $script:directorySubstituted) {
+                        $script:directorySubstituted = $true
+                        [IO.Directory]::Move($staging, $displacedOwned)
+                        [IO.Directory]::CreateDirectory($staging) | Out-Null
+                        [IO.File]::WriteAllText($foreignFile, 'preserve-replacement')
+                    }
+                    $true
+                }
+
+                $published = Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace
+
+                $published | Should -Be (Join-Path $runs $script:preparedRun.runId)
+                [IO.File]::ReadAllText((Join-Path $published 'manifest.yaml')) | Should -BeExactly $script:preparation.manifestText
+                Test-Path (Join-Path $published 'foreign.txt') | Should -BeFalse
+                [IO.File]::ReadAllText($foreignFile) | Should -BeExactly 'preserve-replacement'
+                Test-Path $displacedOwned | Should -BeFalse
+                Should -Invoke Assert-WpaStagingOwnershipMarkerReleased -Times 1 -Exactly
             }
 
             It 'revalidates profile names before creating the staging directory' {
@@ -507,9 +570,9 @@ Describe 'WinPkgAgent run workspace boundaries' {
 
                 try {
                     { Remove-WpaOwnedRunStagingDirectory -Ownership $ownership } |
-                        Should -Throw 'PREVIEW_STAGING_CLEANUP_FAILED: OWNERSHIP_NOT_PROVEN'
+                        Should -Throw 'PREVIEW_STAGING_PRESERVED'
                 } finally {
-                    $ownership.Stream.Dispose()
+                    if ($null -ne $ownership.Stream) { $ownership.Stream.Dispose() }
                 }
 
                 Test-Path $outside | Should -BeTrue
@@ -524,9 +587,9 @@ Describe 'WinPkgAgent run workspace boundaries' {
 
                 try {
                     { Remove-WpaOwnedRunStagingDirectory -Ownership $ownership } |
-                        Should -Throw 'PREVIEW_STAGING_CLEANUP_FAILED: OWNERSHIP_NOT_PROVEN'
+                        Should -Throw 'PREVIEW_STAGING_PRESERVED'
                 } finally {
-                    $ownership.Stream.Dispose()
+                    if ($null -ne $ownership.Stream) { $ownership.Stream.Dispose() }
                 }
 
                 Test-Path $staging | Should -BeTrue
@@ -544,24 +607,26 @@ Describe 'WinPkgAgent run workspace boundaries' {
 
                 try {
                     { Remove-WpaOwnedRunStagingDirectory -Ownership $ownership } |
-                        Should -Throw 'PREVIEW_STAGING_CLEANUP_FAILED: UNTRUSTED_ANCESTRY'
+                        Should -Throw 'PREVIEW_STAGING_PRESERVED'
                 } finally {
-                    $ownership.Stream.Dispose()
+                    if ($null -ne $ownership.Stream) { $ownership.Stream.Dispose() }
                 }
 
                 Test-Path $staging | Should -BeTrue
                 Should -Invoke Remove-Item -Times 0 -Exactly
             }
 
-            It 'sanitizes cleanup deletion failures without exposing the staging path' {
-                $workspace = Join-Path $TestDrive 'workspace-cleanup-delete'
+            It 'preserves an allowlisted replacement during cleanup and performs zero deletion' {
+                $workspace = Join-Path $TestDrive 'workspace-cleanup-replacement'
                 $runs = Join-Path $workspace 'runs'
                 $staging = Join-Path $runs '.staging-20260809-010203-aabbccdd'
                 $ownership = New-WpaRunStagingOwnership -WorkspacePath $workspace -RunsPath $runs -StagingPath $staging -ExpectedLeaf '.staging-20260809-010203-aabbccdd'
                 $ownedFile = Join-Path $staging 'plan.json'
-                [IO.File]::WriteAllText($ownedFile, '{}')
+                [IO.File]::WriteAllText($ownedFile, 'owned')
                 $ownership.OwnedFiles.Add([IO.Path]::GetFullPath($ownedFile)) | Out-Null
-                Mock Remove-Item { throw "cannot delete $LiteralPath" } -ParameterFilter { $LiteralPath -eq $ownedFile }
+                [IO.File]::Delete($ownedFile)
+                [IO.File]::WriteAllText($ownedFile, 'foreign-replacement')
+                Mock Remove-Item {}
 
                 $message = try {
                     Remove-WpaOwnedRunStagingDirectory -Ownership $ownership
@@ -569,16 +634,21 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 } catch {
                     $_.Exception.Message
                 } finally {
-                    $ownership.Stream.Dispose()
+                    if ($null -ne $ownership.Stream) { $ownership.Stream.Dispose() }
                 }
 
-                $message | Should -BeExactly 'PREVIEW_STAGING_CLEANUP_FAILED: DELETE_FAILED'
+                $message | Should -BeExactly 'PREVIEW_STAGING_PRESERVED'
                 $message | Should -Not -Match ([regex]::Escape($TestDrive))
-                Test-Path $staging | Should -BeTrue
+                [IO.File]::ReadAllText($ownedFile) | Should -BeExactly 'foreign-replacement'
+                Should -Invoke Remove-Item -Times 0 -Exactly
             }
 
-            It 'returns only the future final path on WhatIf without preparation or filesystem mutation' {
-                $workspace = Join-Path $TestDrive 'workspace-whatif'
+            It 'returns only the future final path on WhatIf for an unavailable drive without provider probes' {
+                $usedDrives = @(Get-PSDrive -PSProvider FileSystem | ForEach-Object Name)
+                $missingDrive = @('Z','Y','X','W','V','U','T','S','R','Q','P') | Where-Object { $_ -notin $usedDrives } | Select-Object -First 1
+                if ([string]::IsNullOrWhiteSpace($missingDrive)) { throw 'No unavailable drive letter is available for the WhatIf test.' }
+                $workspace = '{0}:\wpa-whatif-workspace' -f $missingDrive
+                $expectedRunsPath = [IO.Path]::Combine([IO.Path]::GetFullPath($workspace), 'runs')
                 Mock New-WpaRunPreparation { throw 'PREPARATION_CALLED' }
                 Mock Test-WpaEnvironmentForPolicy { throw 'ENVIRONMENT_CALLED' }
                 Mock Get-WpaInventoryForPolicy { throw 'INVENTORY_CALLED' }
@@ -594,13 +664,15 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Mock Get-ChildItem { throw 'GET_CHILD_ITEM_CALLED' }
                 Mock Read-WpaTextFile { throw 'TEXT_READ_CALLED' }
                 Mock Read-WpaJsonFile { throw 'JSON_READ_CALLED' }
+                Mock Join-Path { throw 'JOIN_PATH_CALLED' }
+                Mock New-WpaRunStagingOwnership { throw 'NATIVE_HANDLE_CALLED' }
 
                 $result = New-WpaRun -ManifestPath missing-manifest.yaml -PolicyPath missing-policy.yaml -WorkspacePath $workspace -Now ([datetimeoffset]'2026-08-08T01:02:03Z') -WhatIf
 
                 @($result.PSObject.Properties.Name) | Should -Be @('runPath','whatIf')
                 $result.whatIf | Should -BeTrue
-                Split-Path $result.runPath -Parent | Should -Be (Join-Path ([IO.Path]::GetFullPath($workspace)) 'runs')
-                Split-Path $result.runPath -Leaf | Should -Match '^20260808-010203-[a-f0-9]{8}$'
+                [IO.Path]::GetDirectoryName($result.runPath) | Should -Be $expectedRunsPath
+                [IO.Path]::GetFileName($result.runPath) | Should -Match '^20260808-010203-[a-f0-9]{8}$'
                 [IO.Directory]::Exists($workspace) | Should -BeFalse
                 Should -Invoke New-WpaRunPreparation -Times 0 -Exactly
                 Should -Invoke Test-WpaEnvironmentForPolicy -Times 0 -Exactly
@@ -617,6 +689,8 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Should -Invoke Get-ChildItem -Times 0 -Exactly
                 Should -Invoke Read-WpaTextFile -Times 0 -Exactly
                 Should -Invoke Read-WpaJsonFile -Times 0 -Exactly
+                Should -Invoke Join-Path -Times 0 -Exactly
+                Should -Invoke New-WpaRunStagingOwnership -Times 0 -Exactly
             }
         }
     }
