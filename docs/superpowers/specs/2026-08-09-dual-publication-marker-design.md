@@ -1,7 +1,7 @@
 # Dual publication marker design
 
 **Date:** 2026-08-09  
-**Status:** Human-approved design, written-spec review pending  
+**Status:** Human-approved on 2026-08-09
 **Scope:** Close the remaining preview publication TOCTOU in `349655d` without changing package-management or approval behavior.
 
 ## Problem
