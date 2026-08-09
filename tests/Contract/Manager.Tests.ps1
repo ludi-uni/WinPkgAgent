@@ -145,26 +145,265 @@ Describe 'manager contract parsers' {
         InModuleScope WinPkgAgent { $x=ConvertFrom-WpaWingetExport '{"Sources":[{"Packages":[{"PackageIdentifier":"Contoso.App","Version":"1.2.3"}]}]}'; $x[0].Id | Should -Be 'Contoso.App'; (ConvertFrom-WpaWingetExport '{bad') | Should -BeNullOrEmpty }
     }
     It 'accepts an empty winget export as an empty package set' {
-        InModuleScope WinPkgAgent { @(ConvertFrom-WpaWingetExport '{"Sources":[]}') | Should -HaveCount 0 }
+        InModuleScope WinPkgAgent {
+            $result = ConvertFrom-WpaWingetExport '{"Sources":[]}'
+            $null -eq $result | Should -BeFalse
+            $result | Should -HaveCount 0
+        }
     }
     It 'parses scoop export' { InModuleScope WinPkgAgent { $x=ConvertFrom-WpaScoopExport '[{"name":"git","version":"2.45.1","bucket":"main"}]'; $x[0].Id | Should -Be 'git' } }
     It 'accepts an empty scoop export as an empty package set' {
-        InModuleScope WinPkgAgent { @(ConvertFrom-WpaScoopExport '{"buckets":[],"apps":[]}') | Should -HaveCount 0 }
+        InModuleScope WinPkgAgent {
+            $result = ConvertFrom-WpaScoopExport '{"buckets":[],"apps":[]}'
+            $null -eq $result | Should -BeFalse
+            $result | Should -HaveCount 0
+        }
+    }
+    It 'rejects a Scoop table fallback with an unexpected trailing line' {
+        InModuleScope WinPkgAgent {
+            ConvertFrom-WpaScoopFallback "Name Version`ngit 2.45.1`nunexpected output extra" | Should -BeNullOrEmpty
+        }
+    }
+    It 'rejects output before a Scoop table fallback header' {
+        InModuleScope WinPkgAgent {
+            ConvertFrom-WpaScoopFallback "unexpected output`nName Version`ngit 2.45.1" | Should -BeNullOrEmpty
+        }
+    }
+    It 'parses the official multiline Scoop version output' {
+        InModuleScope WinPkgAgent {
+            $text = "Current Scoop version:`nv0.5.3 - Released at 2025-04-11`n`n'main' bucket:`n0123456 Update manifests"
+            ConvertFrom-WpaScoopVersion $text | Should -Be '0.5.3'
+        }
+    }
+    It 'rejects an incidental semantic version outside the official Scoop version shape' {
+        InModuleScope WinPkgAgent {
+            ConvertFrom-WpaScoopVersion "Current Scoop version:`n0123456 Update package to v9.9.9" | Should -BeNullOrEmpty
+        }
+    }
+    It 'rejects output before the official Scoop version marker' {
+        InModuleScope WinPkgAgent {
+            $text = "unexpected output`nCurrent Scoop version:`nv0.5.3 - Released at 2025-04-11"
+            ConvertFrom-WpaScoopVersion $text | Should -BeNullOrEmpty
+        }
+    }
+    It 'rejects an unexpected suffix after the official Scoop release version' {
+        InModuleScope WinPkgAgent {
+            $text = "Current Scoop version:`nv0.5.3 - Released at 2025-04-11`nunrecognized trailing output"
+            ConvertFrom-WpaScoopVersion $text | Should -BeNullOrEmpty
+        }
     }
     It 'parses a winget upgrade row whose display name contains spaces' { InModuleScope WinPkgAgent { $x=ConvertFrom-WpaWingetUpgrade "Name              Id               Version  Available  Source`nMozilla Firefox   Mozilla.Firefox  128.0    129.0      winget"; $x.Valid | Should -BeTrue; $x.Items[0].Id | Should -Be 'Mozilla.Firefox'; $x.Items[0].AvailableVersion | Should -Be '129.0' } }
     It 'rejects an unknown winget upgrade locale' { InModuleScope WinPkgAgent { ConvertFrom-WpaWingetUpgrade "Paquet  Courant  Nouveau`noutil 1 2" | Should -BeNullOrEmpty } }
     It 'parses a scoop status row whose columns are aligned with spaces' { InModuleScope WinPkgAgent { $x=ConvertFrom-WpaScoopStatus "Name  Installed  Latest`ngit   2.45.0     2.46.0"; $x.Valid | Should -BeTrue; $x.Items[0].AvailableVersion | Should -Be '2.46.0' } }
+    It 'parses the current Scoop status table columns' {
+        InModuleScope WinPkgAgent {
+            $text = "Name  Installed Version  Latest Version  Missing Dependencies  Info`ngit   2.45.0             2.46.0"
+            $result = ConvertFrom-WpaScoopStatus $text
+            $result.Valid | Should -BeTrue
+            $result.Items[0].Id | Should -Be 'git'
+            $result.Items[0].AvailableVersion | Should -Be '2.46.0'
+        }
+    }
+    It 'rejects a header-only current Scoop status table' {
+        InModuleScope WinPkgAgent {
+            ConvertFrom-WpaScoopStatus 'Name  Installed Version  Latest Version  Missing Dependencies  Info' | Should -BeNullOrEmpty
+        }
+    }
+    It 'rejects a header-only legacy Scoop status table' {
+        InModuleScope WinPkgAgent {
+            ConvertFrom-WpaScoopStatus 'Name  Installed  Latest' | Should -BeNullOrEmpty
+        }
+    }
+    It 'rejects output before a current Scoop status header' {
+        InModuleScope WinPkgAgent {
+            $text = "unexpected output`nName  Installed Version  Latest Version  Missing Dependencies  Info`ngit   2.45.0             2.46.0"
+            ConvertFrom-WpaScoopStatus $text | Should -BeNullOrEmpty
+        }
+    }
+    It 'rejects a current Scoop status row that ends before the latest-version column' {
+        InModuleScope WinPkgAgent {
+            $text = "Name  Installed Version  Latest Version  Missing Dependencies  Info`ngit   2.45.0"
+            ConvertFrom-WpaScoopStatus $text | Should -BeNullOrEmpty
+        }
+    }
     It 'treats a successful Scoop status with no installed apps as an empty update set' {
         InModuleScope WinPkgAgent {
             Mock Resolve-WpaManagerExecutable { 'C:\fixtures\scoop.cmd' }
             Mock Invoke-WpaProcess {
                 if ($Arguments[0] -eq 'export') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '{"buckets":[],"apps":[]}'; StdErr = '' } }
                 if ($Arguments[0] -eq '--version') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '0.5.3'; StdErr = '' } }
-                [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = 'WARN  Scoop bucket(s) out of date.'; StdErr = '' }
+                [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = 'Everything is ok!'; StdErr = '' }
             }
             $result = Get-WpaScoopInventory
             $result.status | Should -Be 'success'
             @($result.Packages) | Should -HaveCount 0
+        }
+    }
+    It 'uses local-only Scoop status during inventory' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\scoop.cmd' }
+            Mock Invoke-WpaProcess {
+                if ($Arguments[0] -eq 'export') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '{"buckets":[],"apps":[]}'; StdErr = '' } }
+                if ($Arguments[0] -eq '--version') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '0.5.3'; StdErr = '' } }
+                [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = 'Everything is ok!'; StdErr = '' }
+            }
+
+            Get-WpaScoopInventory | Out-Null
+
+            Should -Invoke Invoke-WpaProcess -Times 1 -Exactly -ParameterFilter {
+                $Arguments.Count -eq 2 -and $Arguments[0] -eq 'status' -and $Arguments[1] -eq '--local' -and $NoTruncateOutput
+            }
+        }
+    }
+    It 'captures complete Scoop export output for parsing' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\scoop.cmd' }
+            Mock Invoke-WpaProcess {
+                if ($Arguments[0] -eq 'export') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '{"buckets":[],"apps":[]}'; StdErr = '' } }
+                if ($Arguments[0] -eq '--version') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '0.5.3'; StdErr = '' } }
+                [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = 'Everything is ok!'; StdErr = '' }
+            }
+
+            Get-WpaScoopInventory | Out-Null
+
+            Should -Invoke Invoke-WpaProcess -Times 1 -Exactly -ParameterFilter {
+                $Arguments.Count -eq 1 -and $Arguments[0] -eq 'export' -and $NoTruncateOutput
+            }
+        }
+    }
+    It 'accepts a complete known Scoop table fallback after a clean export' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\scoop.cmd' }
+            Mock Invoke-WpaProcess {
+                if ($Arguments[0] -eq 'export') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = "Name Version`ngit 2.45.1"; StdErr = '' } }
+                if ($Arguments[0] -eq '--version') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '0.5.3'; StdErr = '' } }
+                [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = 'Everything is ok!'; StdErr = '' }
+            }
+
+            $result = Get-WpaScoopInventory
+
+            $result.status | Should -Be 'success'
+            $result.Packages | Should -HaveCount 1
+            $result.Packages[0].id | Should -Be 'git'
+        }
+    }
+    It 'rejects clean malformed Scoop export output' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\scoop.cmd' }
+            Mock Invoke-WpaProcess {
+                if ($Arguments[0] -eq 'export') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = 'unrecognized output'; StdErr = '' } }
+                if ($Arguments[0] -eq '--version') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '0.5.3'; StdErr = '' } }
+                [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = 'Everything is ok!'; StdErr = '' }
+            }
+
+            $result = Get-WpaScoopInventory
+
+            $result.status | Should -Be 'failed'
+            $result.Success | Should -BeFalse
+            $result.Packages | Should -HaveCount 0
+        }
+    }
+    It 'fails Scoop inventory when export emits stderr despite a zero exit code' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\scoop.cmd' }
+            Mock Invoke-WpaProcess {
+                if ($Arguments[0] -eq 'export') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '{"buckets":[],"apps":[]}'; StdErr = 'fatal: detected dubious ownership' } }
+                if ($Arguments[0] -eq '--version') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '0.5.3'; StdErr = '' } }
+                [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = 'Name  Installed  Latest'; StdErr = '' }
+            }
+            $result = Get-WpaScoopInventory
+            $result.status | Should -Be 'failed'
+            $result.Success | Should -BeFalse
+            $result.warning | Should -Match 'stderr|unavailable|malformed'
+        }
+    }
+    It 'fails Scoop inventory when export exits nonzero despite table-like stdout' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\scoop.cmd' }
+            Mock Invoke-WpaProcess {
+                if ($Arguments[0] -eq 'export') { return [pscustomobject]@{ ExitCode = 1; TimedOut = $false; StdOut = "Name Version`ngit 2.45.1"; StdErr = '' } }
+                if ($Arguments[0] -eq '--version') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '0.5.3'; StdErr = '' } }
+                [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = 'Name  Installed  Latest'; StdErr = '' }
+            }
+            $result = Get-WpaScoopInventory
+            $result.status | Should -Be 'failed'
+            $result.Success | Should -BeFalse
+            @($result.Packages) | Should -HaveCount 0
+        }
+    }
+    It 'reports partial Scoop inventory when the version output is not numeric' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\scoop.cmd' }
+            Mock Invoke-WpaProcess {
+                if ($Arguments[0] -eq 'export') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '[{"name":"git","version":"2.45.1","bucket":"main"}]'; StdErr = '' } }
+                if ($Arguments[0] -eq '--version') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = 'Current Scoop version:'; StdErr = '' } }
+                [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = 'Name  Installed  Latest'; StdErr = '' }
+            }
+            $result = Get-WpaScoopInventory
+            $result.status | Should -Be 'partial'
+            $result.Success | Should -BeTrue
+            $result.warning | Should -Match 'version|status|unavailable|unrecognized'
+        }
+    }
+    It 'reports partial Scoop inventory when the version probe emits stderr' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\scoop.cmd' }
+            Mock Invoke-WpaProcess {
+                if ($Arguments[0] -eq 'export') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '[{"name":"git","version":"2.45.1","bucket":"main"}]'; StdErr = '' } }
+                if ($Arguments[0] -eq '--version') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '0.5.3'; StdErr = 'fatal: detected dubious ownership' } }
+                [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = 'Everything is ok!'; StdErr = '' }
+            }
+
+            $result = Get-WpaScoopInventory
+
+            $result.status | Should -Be 'partial'
+            $result.version | Should -BeNullOrEmpty
+            $result.Success | Should -BeTrue
+        }
+    }
+    It 'reports partial Scoop inventory when status output is empty for an empty export' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\scoop.cmd' }
+            Mock Invoke-WpaProcess {
+                if ($Arguments[0] -eq 'export') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '{"buckets":[],"apps":[]}'; StdErr = '' } }
+                if ($Arguments[0] -eq '--version') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '0.5.3'; StdErr = '' } }
+                [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = ''; StdErr = '' }
+            }
+            $result = Get-WpaScoopInventory
+            $result.status | Should -Be 'partial'
+            $result.Success | Should -BeTrue
+            $result.warning | Should -Match 'status|unavailable|unrecognized'
+        }
+    }
+    It 'reports partial timed-out Scoop inventory when local status times out' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\scoop.cmd' }
+            Mock Invoke-WpaProcess {
+                if ($Arguments[0] -eq 'export') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '[{"name":"git","version":"2.45.1","bucket":"main"}]'; StdErr = '' } }
+                if ($Arguments[0] -eq '--version') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '0.5.3'; StdErr = '' } }
+                [pscustomobject]@{ ExitCode = $null; TimedOut = $true; StdOut = 'Everything is ok!'; StdErr = '' }
+            }
+
+            $result = Get-WpaScoopInventory
+
+            $result.status | Should -Be 'partial'
+            $result.timedOut | Should -BeTrue
+            $result.Success | Should -BeTrue
+        }
+    }
+    It 'reports partial Scoop inventory when local status exits nonzero' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\scoop.cmd' }
+            Mock Invoke-WpaProcess {
+                if ($Arguments[0] -eq 'export') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '[{"name":"git","version":"2.45.1","bucket":"main"}]'; StdErr = '' } }
+                if ($Arguments[0] -eq '--version') { return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = '0.5.3'; StdErr = '' } }
+                [pscustomobject]@{ ExitCode = 1; TimedOut = $false; StdOut = 'Everything is ok!'; StdErr = '' }
+            }
+
+            $result = Get-WpaScoopInventory
+
+            $result.status | Should -Be 'partial'
+            $result.Success | Should -BeTrue
         }
     }
     It 'builds scoop install spec as one literal argument' { InModuleScope WinPkgAgent { Mock Invoke-WpaProcess { [pscustomobject]@{ExitCode=0} }; Install-WpaScoopPackage -Id git -Version 2.45.1 -Source main; Assert-MockCalled Invoke-WpaProcess -ParameterFilter { $Arguments[1] -eq 'main/git@2.45.1' -and $Arguments[2] -eq '--no-update-scoop' } } }
