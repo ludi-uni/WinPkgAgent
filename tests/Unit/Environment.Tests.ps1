@@ -28,6 +28,21 @@ Describe 'policy-aware environment readiness' {
             Should -Invoke Get-WpaPowerShellRuntimeInfo -ParameterFilter { $PowerShellPath -eq 'C:\fixture\pwsh.exe' } -Times 1 -Exactly
         }
 
+        It 'proves the public policy path is Scoop-only and ready' {
+            $policy = [pscustomobject]@{ schemaVersion = 1; allowedManagers = @('scoop'); runtime = [pscustomobject]@{ powershellPath = 'C:\fixture\pwsh.exe' } }
+            Mock Read-WpaPolicyFile { $policy }
+            Mock Test-WpaScoopAvailable { $true }
+            Mock Test-WpaWingetAvailable { throw 'excluded WinGet manager was probed' }
+
+            $result = Test-WpaEnvironment -PolicyPath 'codex-policy.yaml'
+
+            $result.ready | Should -BeTrue
+            Should -Invoke Read-WpaPolicyFile -Times 1 -Exactly
+            Should -Invoke Test-WpaDataSchema -ParameterFilter { $SchemaName -eq 'policy' } -Times 1 -Exactly
+            Should -Invoke Test-WpaScoopAvailable -Times 1 -Exactly
+            Should -Invoke Test-WpaWingetAvailable -Times 0 -Exactly
+        }
+
         It 'delegates public policy loading to the parsed-policy environment builder' {
             $policy = [pscustomobject]@{ schemaVersion = 1; allowedManagers = @('scoop') }
             $expected = [pscustomobject]@{ ready = $true }
