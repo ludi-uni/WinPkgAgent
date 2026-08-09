@@ -506,6 +506,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Test-Path (Join-Path $final '.wpa-staging-owner') | Should -BeFalse
                 Test-Path (Join-Path $final '.wpa-publication-pending') | Should -BeFalse
                 Test-Path (Join-Path $final '.wpa-publication-complete') | Should -BeTrue
+                Test-Path (Join-Path $final '.wpa-publication-guard-complete') | Should -BeTrue
                 Test-Path (Join-Path (Split-Path $final -Parent) ".wpa-publication-guard-$($run.runId)") | Should -BeFalse
                 Get-ChildItem (Join-Path $workspace 'runs') -Directory -Filter '.staging-*' | Should -BeNullOrEmpty
             }
@@ -525,18 +526,27 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 }
             }
 
-            It 'keeps the publication guard unavailable for replacement while its ownership handle is open' {
+            It 'keeps both publication handles unavailable for replacement while open' {
                 $workspace = Join-Path $TestDrive 'publication-guard-sharing'
                 $runs = Join-Path $workspace 'runs'
                 $staging = Join-Path $runs ".staging-$($script:preparedRun.runId)"
                 $ownership = New-WpaRunStagingOwnership -WorkspacePath $workspace -RunsPath $runs -StagingPath $staging -ExpectedLeaf ".staging-$($script:preparedRun.runId)"
                 try {
-                    New-WpaOwnedPublicationMarker -Ownership $ownership -RunId $script:preparedRun.runId | Out-Null
+                    New-WpaOwnedPublicationGuard -Ownership $ownership -RunId $script:preparedRun.runId | Out-Null
+                    $ownership.Stream.Dispose()
+                    $ownership.Stream = $null
+                    $ownership.DirectoryHandle.Rename((Join-Path $runs $script:preparedRun.runId))
+                    New-WpaOwnedPublicationPendingMarker -Ownership $ownership -FinalPath (Join-Path $runs $script:preparedRun.runId) | Out-Null
 
-                    { [IO.File]::WriteAllText($ownership.PublicationGuardPath, 'replacement') } | Should -Throw
-                    { [IO.File]::Delete($ownership.PublicationGuardPath) } | Should -Throw
-                    Test-Path -LiteralPath $ownership.PublicationGuardPath | Should -BeTrue
-                    $ownership.PublicationMarker.GetSha256() | Should -BeExactly $ownership.PublicationMarkerHash
+                    foreach ($marker in @(
+                        [pscustomobject]@{Handle=$ownership.PublicationGuard;Path=$ownership.PublicationGuardPath;Hash=$ownership.PublicationGuardHash},
+                        [pscustomobject]@{Handle=$ownership.PublicationPendingMarker;Path=$ownership.PublicationPendingPath;Hash=$ownership.PublicationPendingHash}
+                    )) {
+                        { [IO.File]::Open($marker.Path, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete) } | Should -Throw
+                        { [IO.File]::Delete($marker.Path) } | Should -Throw
+                        Test-Path -LiteralPath $marker.Path | Should -BeTrue
+                        $marker.Handle.GetSha256() | Should -BeExactly $marker.Hash
+                    }
                 } finally {
                     Close-WpaRunStagingOwnershipHandles -Ownership $ownership
                 }
@@ -705,6 +715,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
 
                 Test-Path (Join-Path $workspace "runs/$($script:preparedRun.runId)") | Should -BeFalse
                 Test-Path (Join-Path $workspace "runs/.staging-$($script:preparedRun.runId)") | Should -BeTrue
+                Test-Path (Join-Path $workspace "runs/.staging-$($script:preparedRun.runId)/.wpa-publication-guard-$($script:preparedRun.runId)") | Should -BeTrue
                 Should -Invoke Remove-Item -Times 0 -Exactly
             }
 
@@ -790,6 +801,154 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Should -Invoke Remove-Item -Times 0 -Exactly
             }
 
+            It 'keeps the immutable guard present while pending moves to evidence' {
+                $runs = Join-Path $TestDrive 'evidence-reader-interleaving/runs'
+                $final = Join-Path $runs $script:preparedRun.runId
+                [IO.Directory]::CreateDirectory($final) | Out-Null
+                $guardPath = Join-Path $runs ".wpa-publication-guard-$($script:preparedRun.runId)"
+                $pendingPath = Join-Path $final '.wpa-publication-pending'
+                [IO.File]::WriteAllText($guardPath, 'guard-token')
+                [IO.File]::WriteAllText($pendingPath, 'pending-token')
+
+                $guard = [pscustomobject]@{IsOpen=$true;RenameCount=0}
+                $guard | Add-Member -MemberType ScriptMethod -Name Rename -Value { $this.RenameCount++; throw 'guard must not move' }
+                $pending = [pscustomobject]@{IsOpen=$true;RenameCount=0;SourcePath=$pendingPath}
+                $pending | Add-Member -MemberType ScriptMethod -Name Rename -Value {
+                    param($DestinationPath)
+                    $this.RenameCount++
+                    [IO.File]::Move($this.SourcePath, $DestinationPath)
+                    $this.SourcePath = $DestinationPath
+                }
+                $directory = [pscustomobject]@{IsOpen=$true;GuardPresent=$false}
+                $directory | Add-Member -MemberType ScriptMethod -Name Rename -Value {
+                    param($DestinationPath)
+                    $this.GuardPresent = Test-Path -LiteralPath $guardPath
+                    { Read-WpaRun $final } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                    { Approve-WpaRun -RunPath $final -WhatIf } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                    { Invoke-WpaRun -RunPath $final -WhatIf } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                    [IO.Directory]::Move($final, $DestinationPath)
+                }
+                Mock Read-WpaJsonFile { throw 'metadata must not run' }
+                Mock Approve-WpaPlan { throw 'approval must not run' }
+                Mock Invoke-WpaPlan { throw 'invoke must not run' }
+                Mock Remove-Item {}
+                $ownership = [pscustomobject]@{
+                    RunsPath=[IO.Path]::GetFullPath($runs); DirectoryHandle=$directory
+                    PublicationGuard=$guard; PublicationGuardPath=$guardPath
+                    PublicationPendingMarker=$pending; PublicationPendingPath=$pendingPath
+                }
+
+                $evidence = Move-WpaOwnedRunToStagingEvidence -Ownership $ownership -RunId $script:preparedRun.runId
+
+                Test-Path -LiteralPath $guardPath | Should -BeTrue
+                $directory.GuardPresent | Should -BeTrue
+                $guard.RenameCount | Should -Be 0
+                $pending.RenameCount | Should -Be 2
+                Should -Invoke Read-WpaJsonFile -Times 0 -Exactly
+                Should -Invoke Approve-WpaPlan -Times 0 -Exactly
+                Should -Invoke Invoke-WpaPlan -Times 0 -Exactly
+                Should -Invoke Remove-Item -Times 0 -Exactly
+                Test-Path -LiteralPath (Join-Path $evidence '.wpa-publication-pending') | Should -BeTrue
+            }
+
+            It 'preserves the guard and canonical directory after three pending-sibling collisions' {
+                $runs = Join-Path $TestDrive 'evidence-pending-collisions/runs'
+                $final = Join-Path $runs $script:preparedRun.runId
+                [IO.Directory]::CreateDirectory($final) | Out-Null
+                $guardPath = Join-Path $runs ".wpa-publication-guard-$($script:preparedRun.runId)"
+                $pendingPath = Join-Path $final '.wpa-publication-pending'
+                [IO.File]::WriteAllText($guardPath, 'guard-token')
+                [IO.File]::WriteAllText($pendingPath, 'pending-token')
+                $pending = [pscustomobject]@{IsOpen=$true;Attempts=0}
+                $pending | Add-Member -MemberType ScriptMethod -Name Rename -Value { $this.Attempts++; throw 'pending collision' }
+                $ownership = [pscustomobject]@{
+                    RunsPath=[IO.Path]::GetFullPath($runs); DirectoryHandle=[pscustomobject]@{IsOpen=$true}
+                    PublicationGuard=[pscustomobject]@{IsOpen=$true}; PublicationGuardPath=$guardPath
+                    PublicationPendingMarker=$pending; PublicationPendingPath=$pendingPath
+                }
+                Mock Remove-Item {}
+
+                { Move-WpaOwnedRunToStagingEvidence -Ownership $ownership -RunId $script:preparedRun.runId } |
+                    Should -Throw 'Owned staging evidence could not be preserved.'
+
+                $pending.Attempts | Should -Be 3
+                Test-Path -LiteralPath $guardPath | Should -BeTrue
+                Test-Path -LiteralPath $final | Should -BeTrue
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
+            It 'preserves the guard after three directory collisions following a pending move' {
+                $runs = Join-Path $TestDrive 'evidence-directory-collisions/runs'
+                $final = Join-Path $runs $script:preparedRun.runId
+                [IO.Directory]::CreateDirectory($final) | Out-Null
+                $guardPath = Join-Path $runs ".wpa-publication-guard-$($script:preparedRun.runId)"
+                $pendingPath = Join-Path $final '.wpa-publication-pending'
+                [IO.File]::WriteAllText($guardPath, 'guard-token')
+                [IO.File]::WriteAllText($pendingPath, 'pending-token')
+                $pending = [pscustomobject]@{IsOpen=$true;Attempts=0;SourcePath=$pendingPath}
+                $pending | Add-Member -MemberType ScriptMethod -Name Rename -Value {
+                    param($DestinationPath)
+                    $this.Attempts++
+                    [IO.File]::Move($this.SourcePath, $DestinationPath)
+                    $this.SourcePath = $DestinationPath
+                }
+                $directory = [pscustomobject]@{IsOpen=$true;Attempts=0}
+                $directory | Add-Member -MemberType ScriptMethod -Name Rename -Value { $this.Attempts++; throw 'directory collision' }
+                $ownership = [pscustomobject]@{
+                    RunsPath=[IO.Path]::GetFullPath($runs); DirectoryHandle=$directory
+                    PublicationGuard=[pscustomobject]@{IsOpen=$true}; PublicationGuardPath=$guardPath
+                    PublicationPendingMarker=$pending; PublicationPendingPath=$pendingPath
+                }
+                Mock Remove-Item {}
+
+                { Move-WpaOwnedRunToStagingEvidence -Ownership $ownership -RunId $script:preparedRun.runId } |
+                    Should -Throw 'Owned staging evidence could not be preserved.'
+
+                $pending.Attempts | Should -Be 1
+                $directory.Attempts | Should -Be 3
+                Test-Path -LiteralPath $guardPath | Should -BeTrue
+                Test-Path -LiteralPath $final | Should -BeTrue
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
+            It 'preserves the guard when pending cannot move into moved evidence' {
+                $runs = Join-Path $TestDrive 'evidence-pending-final-failure/runs'
+                $final = Join-Path $runs $script:preparedRun.runId
+                [IO.Directory]::CreateDirectory($final) | Out-Null
+                $guardPath = Join-Path $runs ".wpa-publication-guard-$($script:preparedRun.runId)"
+                $pendingPath = Join-Path $final '.wpa-publication-pending'
+                [IO.File]::WriteAllText($guardPath, 'guard-token')
+                [IO.File]::WriteAllText($pendingPath, 'pending-token')
+                $pending = [pscustomobject]@{IsOpen=$true;Attempts=0;SourcePath=$pendingPath}
+                $pending | Add-Member -MemberType ScriptMethod -Name Rename -Value {
+                    param($DestinationPath)
+                    $this.Attempts++
+                    if ($this.Attempts -eq 1) { [IO.File]::Move($this.SourcePath, $DestinationPath); $this.SourcePath = $DestinationPath; return }
+                    throw 'pending evidence move failure'
+                }
+                $directory = [pscustomobject]@{IsOpen=$true;Attempts=0}
+                $directory | Add-Member -MemberType ScriptMethod -Name Rename -Value {
+                    param($DestinationPath)
+                    $this.Attempts++
+                    if ($this.Attempts -eq 1) { [IO.Directory]::Move($final, $DestinationPath); return }
+                    throw 'directory retry collision'
+                }
+                $ownership = [pscustomobject]@{
+                    RunsPath=[IO.Path]::GetFullPath($runs); DirectoryHandle=$directory
+                    PublicationGuard=[pscustomobject]@{IsOpen=$true}; PublicationGuardPath=$guardPath
+                    PublicationPendingMarker=$pending; PublicationPendingPath=$pendingPath
+                }
+                Mock Remove-Item {}
+
+                { Move-WpaOwnedRunToStagingEvidence -Ownership $ownership -RunId $script:preparedRun.runId } |
+                    Should -Throw 'Owned staging evidence could not be preserved.'
+
+                $pending.Attempts | Should -Be 2
+                Test-Path -LiteralPath $guardPath | Should -BeTrue
+                @(Get-ChildItem -LiteralPath $runs -Directory -Filter '.staging-evidence-*').Count | Should -Be 1
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
             It 'exhausts three collision-safe evidence renames without deleting evidence' {
                 $runs = Join-Path $TestDrive 'evidence-collision-exhaustion/runs'
                 [IO.Directory]::CreateDirectory($runs) | Out-Null
@@ -799,7 +958,14 @@ Describe 'WinPkgAgent run workspace boundaries' {
                     $this.Attempts++
                     throw [IO.IOException]::new('destination collision')
                 }
-                $ownership = [pscustomobject]@{DirectoryHandle=$handle;RunsPath=[IO.Path]::GetFullPath($runs)}
+                $guard = [pscustomobject]@{IsOpen=$true}
+                $ownership = [pscustomobject]@{
+                    DirectoryHandle=$handle
+                    PublicationGuard=$guard
+                    PublicationPendingMarker=$handle
+                    PublicationPendingPath=(Join-Path $runs '.wpa-publication-pending')
+                    RunsPath=[IO.Path]::GetFullPath($runs)
+                }
                 Mock Remove-Item {}
 
                 { Move-WpaOwnedRunToStagingEvidence -Ownership $ownership -RunId $script:preparedRun.runId } |
@@ -843,7 +1009,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
             It 'leaves a completion-marker rename failure pending and rejects read approval and invoke consumers' {
                 $workspace = Join-Path $TestDrive 'workspace-completion-marker-failure'
                 $final = Join-Path $workspace "runs/$($script:preparedRun.runId)"
-                Mock Move-WpaOwnedPublicationMarkerToCompleted { throw 'simulated completion marker failure' }
+                Mock Complete-WpaOwnedRunPublication { throw 'simulated completion marker failure' }
                 Mock Approve-WpaPlan { throw 'approval must not run' }
                 Mock Invoke-WpaPlan { throw 'invoke must not run' }
                 Mock Remove-Item {}
@@ -859,6 +1025,108 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 { Invoke-WpaRun -RunPath $final -WhatIf } | Should -Throw 'RUN_PUBLICATION_PENDING'
                 Should -Invoke Approve-WpaPlan -Times 0 -Exactly
                 Should -Invoke Invoke-WpaPlan -Times 0 -Exactly
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
+            It 'does not rename the guard when pending completion fails' {
+                $runs = Join-Path $TestDrive 'completion-pending-failure/runs'
+                $final = Join-Path $runs $script:preparedRun.runId
+                [IO.Directory]::CreateDirectory($final) | Out-Null
+                $guardPath = Join-Path $runs ".wpa-publication-guard-$($script:preparedRun.runId)"
+                $pendingPath = Join-Path $final '.wpa-publication-pending'
+                [IO.File]::WriteAllText($guardPath, 'guard-token')
+                [IO.File]::WriteAllText($pendingPath, 'pending-token')
+                $guard = [pscustomobject]@{IsOpen=$true;RenameCount=0}
+                $guard | Add-Member -MemberType ScriptMethod -Name Rename -Value { $this.RenameCount++; throw 'guard rename must not run' }
+                $pending = [pscustomobject]@{IsOpen=$true}
+                $pending | Add-Member -MemberType ScriptMethod -Name Rename -Value { throw 'pending completion failure' }
+                $ownership = [pscustomobject]@{
+                    RunsPath=[IO.Path]::GetFullPath($runs); PublicationGuard=$guard; PublicationGuardPath=$guardPath
+                    PublicationPendingMarker=$pending; PublicationPendingPath=$pendingPath
+                }
+                Mock Read-WpaJsonFile { throw 'metadata must not run' }
+                Mock Approve-WpaPlan { throw 'approval must not run' }
+                Mock Invoke-WpaPlan { throw 'invoke must not run' }
+
+                { Complete-WpaOwnedRunPublication -Ownership $ownership -FinalPath $final } |
+                    Should -Throw '*pending completion failure*'
+
+                $guard.RenameCount | Should -Be 0
+                Test-Path -LiteralPath $guardPath | Should -BeTrue
+                Test-Path -LiteralPath $pendingPath | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $final '.wpa-publication-complete') | Should -BeFalse
+                { Read-WpaRun $final } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                { Approve-WpaRun -RunPath $final -WhatIf } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                { Invoke-WpaRun -RunPath $final -WhatIf } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                Should -Invoke Read-WpaJsonFile -Times 0 -Exactly
+                Should -Invoke Approve-WpaPlan -Times 0 -Exactly
+                Should -Invoke Invoke-WpaPlan -Times 0 -Exactly
+            }
+
+            It 'preserves the sibling guard when guard completion fails after pending success' {
+                $runs = Join-Path $TestDrive 'completion-guard-failure/runs'
+                $final = Join-Path $runs $script:preparedRun.runId
+                [IO.Directory]::CreateDirectory($final) | Out-Null
+                $guardPath = Join-Path $runs ".wpa-publication-guard-$($script:preparedRun.runId)"
+                $pendingPath = Join-Path $final '.wpa-publication-pending'
+                [IO.File]::WriteAllText($guardPath, 'guard-token')
+                [IO.File]::WriteAllText($pendingPath, 'pending-token')
+                $guard = [pscustomobject]@{IsOpen=$true;RenameCount=0}
+                $guard | Add-Member -MemberType ScriptMethod -Name Rename -Value { $this.RenameCount++; throw 'guard completion failure' }
+                $pending = [pscustomobject]@{IsOpen=$true;SourcePath=$pendingPath}
+                $pending | Add-Member -MemberType ScriptMethod -Name Rename -Value {
+                    param($DestinationPath)
+                    [IO.File]::Move($this.SourcePath, $DestinationPath)
+                    $this.SourcePath = $DestinationPath
+                }
+                $ownership = [pscustomobject]@{
+                    RunsPath=[IO.Path]::GetFullPath($runs); PublicationGuard=$guard; PublicationGuardPath=$guardPath
+                    PublicationPendingMarker=$pending; PublicationPendingPath=$pendingPath
+                }
+                Mock Read-WpaJsonFile { throw 'metadata must not run' }
+                Mock Approve-WpaPlan { throw 'approval must not run' }
+                Mock Invoke-WpaPlan { throw 'invoke must not run' }
+
+                { Complete-WpaOwnedRunPublication -Ownership $ownership -FinalPath $final } |
+                    Should -Throw '*guard completion failure*'
+
+                $guard.RenameCount | Should -Be 1
+                Test-Path -LiteralPath $guardPath | Should -BeTrue
+                Test-Path -LiteralPath $pendingPath | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $final '.wpa-publication-complete') | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $final '.wpa-publication-guard-complete') | Should -BeFalse
+                { Read-WpaRun $final } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                { Approve-WpaRun -RunPath $final -WhatIf } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                { Invoke-WpaRun -RunPath $final -WhatIf } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                Should -Invoke Read-WpaJsonFile -Times 0 -Exactly
+                Should -Invoke Approve-WpaPlan -Times 0 -Exactly
+                Should -Invoke Invoke-WpaPlan -Times 0 -Exactly
+            }
+
+            It 'leaves the sibling guard when the pre-canonical guard move fails' {
+                $workspace = Join-Path $TestDrive 'workspace-pre-canonical-guard-failure'
+                $runs = Join-Path $workspace 'runs'
+                $guardPath = Join-Path $runs ".wpa-publication-guard-$($script:preparedRun.runId)"
+                $script:preRenameGuard = [pscustomobject]@{IsOpen=$true;RenameCount=0}
+                $script:preRenameGuard | Add-Member -MemberType ScriptMethod -Name Rename -Value { $this.RenameCount++; throw 'guard staging move failure' }
+                $script:preRenameGuard | Add-Member -MemberType ScriptMethod -Name Dispose -Value { $this.IsOpen=$false }
+                Mock New-WpaOwnedPublicationGuard {
+                    param($Ownership, $RunId)
+                    $guardPathForTest = Join-Path $Ownership.RunsPath ".wpa-publication-guard-$RunId"
+                    [IO.File]::WriteAllText($guardPathForTest, 'guard-token')
+                    $Ownership.PublicationGuardPath = $guardPathForTest
+                    $Ownership.PublicationGuard = $script:preRenameGuard
+                }
+                Mock Assert-WpaPlanIntegrity { throw 'pre-canonical failure' }
+                Mock Remove-Item {}
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw 'PREVIEW_STAGING_PRESERVED'
+
+                $script:preRenameGuard.RenameCount | Should -Be 1
+                Test-Path -LiteralPath $guardPath | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $runs ".staging-$($script:preparedRun.runId)") | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $runs $script:preparedRun.runId) | Should -BeFalse
                 Should -Invoke Remove-Item -Times 0 -Exactly
             }
 
