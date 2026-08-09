@@ -6,6 +6,8 @@
 
 `Test-WpaEnvironment` の `managers.scoop` が `false` の場合は、[Scoop公式手順](https://github.com/ScoopInstaller/Install#installation)を確認し、通常の非管理者PowerShellでScoopを導入してください。PowerShellを開き直した後、inventoryとplanを作り直します。ツールはScoopを自動導入しません。
 
+Scoop inventoryのstatus確認は `scoop status --local` で行い、remoteをfetchしません。`availableVersion` はローカルbucket manifestの時点を表します。`scoop --version` がrelease semantic versionではなく開発branchのGit commitを返す場合、WinPkgAgentはversionを推測せずmanagerを `partial` にします。Scoop branchや設定は自動変更しません。
+
 policyはホストやCodexから推測せず、明示的に選択します。CodexでScoopだけを使うscopeには `./config/policy.codex.yaml`、デスクトップのWinGet+Scoopには `./config/policy.desktop.yaml` または `./config/policy.default.yaml` を使い、environment、inventory、plan、apply、検証に同じpolicyを渡します。inventoryはschema v2の `policyHash` と `managerScope` を持つため、schema v1またはscopeなしの成果物はplanの前に再生成します。不一致は `INVENTORY_SCOPE_MISMATCH` で拒否されます。
 
 実行環境は `powershell.exe` ではなく、PowerShell 7.4以降の `pwsh.exe` を使用してください。パス解決が不安定な場合は、絶対パスで実行します。

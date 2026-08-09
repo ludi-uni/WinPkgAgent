@@ -18,6 +18,8 @@ Inventory is schema v2 and records `policyHash` and `managerScope`. Regenerate s
 
 If `Test-WpaEnvironment` reports `managers.scoop: false`, follow the [official Scoop installation instructions](https://github.com/ScoopInstaller/Install#installation) in a regular, non-admin PowerShell, then open a new session and regenerate inventory and plan. The tool does not install Scoop automatically.
 
+Scoop inventory runs `scoop status --local` and does not fetch remotes. Its `availableVersion` values therefore reflect the local bucket manifests. If `scoop --version` reports a development-branch Git commit instead of a release semantic version, WinPkgAgent leaves the manager `partial` rather than guessing a version. It does not change the Scoop branch or configuration automatically.
+
 CLI exit codes are stable for automation: `0` success or `-WhatIf`, `1` command/preflight error, `2` invalid validation result, `3` partial apply failure, `4` verification failure, and `5` reboot required (the tool never reboots automatically).
 
 ## Safe preview
