@@ -52,6 +52,10 @@ Check PowerShell 7.4+, the explicitly selected `-PolicyPath`, manager availabili
 
 For a Codex/Scoop-only inventory, use `Get-WpaInventory -PolicyPath ./config/policy.codex.yaml -OutputPath ./artifacts/codex-inventory.json`. For desktop WinGet+Scoop, use `./config/policy.desktop.yaml` or `./config/policy.default.yaml`. Pass the same policy path to resume verification with `Resume-WpaVerification` or CLI `resume-verify`.
 
+## Preview staging was preserved
+
+`PREVIEW_STAGING_PRESERVED` means no final run was published. Failed staging evidence was intentionally retained to avoid deleting a same-user replacement. Inspect the preserved staging path manually and do not use automatic or recursive deletion.
+
 ## Plan cannot be applied
 
 Regenerate inventory and plan when hashes, expiry, environment identity, policy, manager availability, or freshness checks fail. Review the plan digest and obtain a new interactive approval. AI agents cannot approve it.

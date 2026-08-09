@@ -47,3 +47,23 @@ WinGetのexportに含まれないインストール済み項目も、別の保�
 `policy.codex.yaml` でWinGetを宣言した項目は `MANAGER_NOT_ALLOWED` でblockedになり、Scoopへfallback/remapしません。PATH、実行ポリシー、App Installer/OS policyを変更せず、昇格、manager導入、承認バイパスも行いません。`MANAGER_UNAVAILABLE` は許可managerの利用不可、`INVENTORY_SCOPE_MISMATCH` はpolicy hashまたはscopeの不一致です。
 
 CLI終了コードは、`0` が成功または `-WhatIf`、`1` がコマンド／事前検証エラー、`2` が検証結果不正、`3` が部分適用失敗、`4` が適用後検証失敗、`5` が再起動待ちです。ツール自身は再起動しません。
+
+## 安全な preview
+
+同じfixture manifestに対してpolicyを明示して実行します。
+
+```powershell
+pwsh ./scripts/winpkg-agent.ps1 preview -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/policy.codex.yaml -WorkspacePath ./.wpa
+pwsh ./scripts/winpkg-agent.ps1 preview -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/policy.desktop.yaml -WorkspacePath ./.wpa
+```
+
+previewの終了コードは、`0` が準備完了、`1` が信頼性または公開処理の致命的失敗で完了runがない状態、`2` が `blockedReasons` 付きの確認可能なblocked runが完了した状態です。previewは承認、適用、依存関係の導入、`PATH`変更、source追加、昇格、managerのfallback/remapを行いません。
+
+確認と適用は人間が分離して行います。
+
+```powershell
+pwsh ./scripts/winpkg-agent.ps1 show-run -RunPath <run-path>
+pwsh ./scripts/winpkg-agent.ps1 approve-run -RunPath <run-path>
+pwsh ./scripts/winpkg-agent.ps1 invoke-run -RunPath <run-path> -WhatIf
+pwsh ./scripts/winpkg-agent.ps1 invoke-run -RunPath <run-path>
+```

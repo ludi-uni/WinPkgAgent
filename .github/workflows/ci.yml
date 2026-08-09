@@ -76,6 +76,10 @@ jobs:
           New-Item -ItemType Directory -Path ./TestResults -Force | Out-Null
           & ./scripts/winpkg-agent.ps1 plan -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/policy.default.yaml -InventoryPath ./examples/inventory.sample.json -OutputPath ./TestResults/whatif-plan.json -WhatIf
           if (Test-Path ./TestResults/whatif-plan.json) { throw 'WhatIf wrote a plan artifact' }
+          $previewWorkspace = './TestResults/preview-whatif-workspace'
+          & ./scripts/winpkg-agent.ps1 preview -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/policy.codex.yaml -WorkspacePath $previewWorkspace -WhatIf
+          if ($LASTEXITCODE -ne 0) { throw "preview WhatIf failed with exit code $LASTEXITCODE" }
+          if (Test-Path -LiteralPath $previewWorkspace) { throw 'preview WhatIf wrote workspace artifacts' }
 
       - name: Upload test results
         if: always()

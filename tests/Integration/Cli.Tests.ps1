@@ -127,6 +127,15 @@ Describe 'winpkg-agent CLI' {
         $docs | Should -Match 'MANAGER_UNAVAILABLE'
         $docs | Should -Match 'resume-verify[\s\S]*-PolicyPath'
 
+        $docs | Should -Match 'winpkg-agent\.ps1 preview[\s\S]*packages\.example\.yaml[\s\S]*policy\.codex\.yaml'
+        $docs | Should -Match 'preview[\s\S]*packages\.example\.yaml[\s\S]*policy\.(desktop|default)\.yaml'
+        $docs | Should -Match 'blockedReasons'
+        $docs | Should -Match 'exit code 2|終了コード.*2'
+        $docs | Should -Match 'show-run[\s\S]*approve-run[\s\S]*invoke-run[\s\S]*WhatIf'
+        $docs | Should -Match 'never approves|承認.*行いません'
+        $docs | Should -Match 'PREVIEW_STAGING_PRESERVED'
+        $docs | Should -Match 'inspect[\s\S]*manually|手動[\s\S]*確認'
+
         $samplePath = Join-Path $root 'examples/inventory.sample.json'
         $sample = Get-Content $samplePath -Raw | ConvertFrom-Json
         $sample.schemaVersion | Should -Be 2

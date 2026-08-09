@@ -71,6 +71,26 @@ New-WpaPlan -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/po
 
 Codex/Scoop限定policyでWinGetを宣言したmanifest項目は `MANAGER_NOT_ALLOWED` でblockedになります。Scoopへのfallback/remap、PATHや実行ポリシーの変更、App Installer/OS policyの変更、権限昇格、managerの導入、承認のバイパスは行いません。`MANAGER_UNAVAILABLE` は許可されたmanagerを利用できない状態、`INVENTORY_SCOPE_MISMATCH` はinventoryのpolicy hashまたはmanager scopeが選択policyと一致しない状態です。
 
+## 安全な preview
+
+previewは承認や適用をせず、確認可能なrun summaryだけを作成します。
+
+```powershell
+pwsh ./scripts/winpkg-agent.ps1 preview -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/policy.codex.yaml -WorkspacePath ./.wpa
+pwsh ./scripts/winpkg-agent.ps1 preview -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/policy.desktop.yaml -WorkspacePath ./.wpa
+```
+
+終了コード `0` はpreviewが準備完了、`1` は信頼性または公開処理の致命的失敗で完了runがない状態、`2` は `blockedReasons` を含む確認可能なblocked runが完了した状態です。previewは承認、適用、依存関係の導入、`PATH`変更、source追加、昇格、managerのfallback/remapを行いません。
+
+preview後の確認と適用は、人間が別々に行う手順です。
+
+```powershell
+pwsh ./scripts/winpkg-agent.ps1 show-run -RunPath <run-path>
+pwsh ./scripts/winpkg-agent.ps1 approve-run -RunPath <run-path>
+pwsh ./scripts/winpkg-agent.ps1 invoke-run -RunPath <run-path> -WhatIf
+pwsh ./scripts/winpkg-agent.ps1 invoke-run -RunPath <run-path>
+```
+
 `-WhatIf`では変更アダプターを呼びません。承認は計画ダイジェストへの明示的同意であり、本人認証やロールバック保証ではありません。
 
 詳細は [docs/architecture.ja.md](docs/architecture.ja.md)、[docs/safety.ja.md](docs/safety.ja.md)、[docs/usage.ja.md](docs/usage.ja.md) を参照してください。

@@ -101,6 +101,26 @@ New-WpaPlan -ManifestPath ./config/packages.example.yaml `
 
 Under the Codex/Scoop-only policy, a manifest package declared for WinGet is blocked with `MANAGER_NOT_ALLOWED`. winpkg-agent does not fallback or remap it to Scoop, change `PATH` or execution policy, alter App Installer/OS policy, elevate, install managers, or bypass approval. `MANAGER_UNAVAILABLE` means an allowed manager could not be used; `INVENTORY_SCOPE_MISMATCH` means the inventory's policy hash or manager scope is not the selected policy.
 
+## Safe preview
+
+Preview creates a reviewable run summary without approval or apply:
+
+```powershell
+pwsh ./scripts/winpkg-agent.ps1 preview -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/policy.codex.yaml -WorkspacePath ./.wpa
+pwsh ./scripts/winpkg-agent.ps1 preview -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/policy.desktop.yaml -WorkspacePath ./.wpa
+```
+
+Exit code `0` means the preview is ready, `1` means a fatal trust/publication failure occurred and no completed run exists, and `2` means a completed reviewable blocked run exists with `blockedReasons`. Preview never approves, applies, installs dependencies, mutates `PATH`, adds sources, elevates, or remaps managers.
+
+After a successful preview, review and apply only as a separate human-controlled sequence:
+
+```powershell
+pwsh ./scripts/winpkg-agent.ps1 show-run -RunPath <run-path>
+pwsh ./scripts/winpkg-agent.ps1 approve-run -RunPath <run-path>
+pwsh ./scripts/winpkg-agent.ps1 invoke-run -RunPath <run-path> -WhatIf
+pwsh ./scripts/winpkg-agent.ps1 invoke-run -RunPath <run-path>
+```
+
 Example plan row:
 
 ```text
