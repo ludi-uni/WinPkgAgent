@@ -31,7 +31,7 @@
 - `src/WinPkgAgent/Private/Inventory/PolicyInventory.ps1`: build an inventory from an already parsed policy object.
 - `src/WinPkgAgent/Private/Planning/PlanBuilder.ps1`: build and integrity-check a plan object without reading or writing files.
 - `src/WinPkgAgent/Private/Workspace/RunPreparation.ps1`: snapshot and validate manifest, profile, policy, environment, inventory, and plan in memory.
-- `src/WinPkgAgent/Private/Workspace/RunPublication.ps1`: publish a prepared run through an owned staging directory and guarded cleanup.
+- `src/WinPkgAgent/Private/Workspace/RunPublication.ps1`: publish a prepared run through an owned staging directory and preserve staging evidence on failure.
 - `src/WinPkgAgent/Private/Schema/DataFiles.ps1`: parse exact YAML text so validated content and persisted content cannot drift.
 - `src/WinPkgAgent/Private/Workspace.ps1`: retain public run functions while delegating `New-WpaRun` to prepare/publish helpers.
 - `src/WinPkgAgent/Public/Test-WpaEnvironment.ps1`: keep the public file-based API and delegate to the private builder.
@@ -444,7 +444,9 @@ git commit -m "feat: prepare trusted run snapshots"
 
 ---
 
-### Task 4: Publish prepared runs atomically with owned cleanup
+### Task 4: Publish prepared runs atomically with preserved failure evidence
+
+> Approved design amendment (2026-08-09): path-based cleanup cannot prove object identity across a same-user replacement race. After staging creation, failure handling preserves staging and throws `PREVIEW_STAGING_PRESERVED`. Successful publication may use narrowly scoped private Windows handle interop to rename the owned staging-directory object; unknown or replacement objects are never removed or published.
 
 **Files:**
 - Create: `src/WinPkgAgent/Private/Workspace/RunPublication.ps1`
@@ -455,7 +457,7 @@ git commit -m "feat: prepare trusted run snapshots"
 - Consumes: Task 3's preparation object and existing fixed artifact helpers.
 - Produces: `Publish-WpaPreparedRun([object]$Preparation,[string]$WorkspacePath)`; `New-WpaRun` continues returning the unchanged run schema object.
 
-- [ ] **Step 1: Add failing publication and cleanup tests**
+- [ ] **Step 1: Add failing publication and failure-preservation tests**
 
 Create the fixture at the start of a nested `Context 'prepared run publication'`:
 
@@ -493,12 +495,13 @@ It 'publishes a complete run only after preparation succeeds' {
     Get-ChildItem (Join-Path $workspace 'runs') -Directory -Filter '.staging-*' | Should -BeNullOrEmpty
 }
 
-It 'removes only its owned staging directory when publication fails' {
+It 'preserves staging evidence when publication fails' {
     Mock New-WpaRunPreparation { $script:preparation }
     Mock Write-WpaAtomicJson { throw 'simulated publication failure' } -ParameterFilter { $Path -like '*plan.json' }
     $workspace=Join-Path $TestDrive 'workspace-failure'
-    { New-WpaRun -ManifestPath manifest.yaml -PolicyPath policy.yaml -WorkspacePath $workspace } | Should -Throw 'simulated publication failure'
-    @(Get-ChildItem (Join-Path $workspace 'runs') -Force -ErrorAction SilentlyContinue).Count | Should -Be 0
+    { New-WpaRun -ManifestPath manifest.yaml -PolicyPath policy.yaml -WorkspacePath $workspace } | Should -Throw 'PREVIEW_STAGING_PRESERVED'
+    @(Get-ChildItem (Join-Path $workspace 'runs') -Directory -Filter '.staging-*').Count | Should -Be 1
+    Should -Invoke Remove-Item -Times 0 -Exactly
 }
 ```
 
@@ -506,7 +509,7 @@ It 'removes only its owned staging directory when publication fails' {
 
 Run the Task 3 focused workspace command.
 
-Expected: publication tests FAIL because the current implementation creates the final run directly and lacks staging cleanup.
+Expected: publication tests FAIL because the current implementation creates the final run directly and lacks handle-bound staging publication and failure preservation.
 
 - [ ] **Step 3: Implement guarded staging publication**
 
@@ -518,7 +521,7 @@ function Publish-WpaPreparedRun {
     param([Parameter(Mandatory)][object]$Preparation,[Parameter(Mandatory)][string]$WorkspacePath)
 ```
 
-Resolve and ancestor-check the workspace exactly as the current `New-WpaRun` does. Set `$runsPath`, `$finalPath`, and `$stagingPath=Join-Path $runsPath ('.staging-'+$Preparation.run.runId)`. Reject existing final/staging paths and any reparse-point ancestor. Create staging only after all checks pass.
+Resolve and ancestor-check the workspace exactly as the current `New-WpaRun` does. Set `$runsPath`, `$finalPath`, and `$stagingPath=Join-Path $runsPath ('.staging-'+$Preparation.run.runId)`. Reject existing final/staging paths and any reparse-point ancestor. Acquire the staging directory atomically and retain a private handle that identifies the exact owned directory object; lexical path/marker equality is not sufficient ownership proof.
 
 Write fixed artifacts from the preparation object:
 
@@ -531,9 +534,9 @@ Write-WpaAtomicText (Get-WpaRunArtifactPath $stagingPath planMarkdown) (ConvertT
 Write-WpaAtomicJson (Get-WpaRunArtifactPath $stagingPath run) $Preparation.run
 ```
 
-For each profile snapshot, validate its name again, create only `profiles/<name>.yaml` beneath staging, reject reparse points, and write its exact text. Validate the staged run with `Read-WpaRun`, plan schema, `Assert-WpaPlanActionSet`, and `Assert-WpaPlanIntegrity`, then publish with `[IO.Directory]::Move($stagingPath,$finalPath)`.
+For each profile snapshot, validate its name again, create only `profiles/<name>.yaml` beneath staging, reject reparse points, and write its exact text. Validate the staged run with `Read-WpaRun`, plan schema, `Assert-WpaPlanActionSet`, and `Assert-WpaPlanIntegrity`, then use narrowly scoped private Windows handle interop to rename that same owned directory object atomically to `$finalPath`. Never publish a replacement object found only by path.
 
-In `catch`, remove only `$stagingPath` after proving its full parent equals `$runsPath`, its leaf equals the generated `.staging-<runId>`, and it is not a reparse point. If cleanup fails, throw `PREVIEW_STAGING_CLEANUP_FAILED` with sanitized detail; otherwise rethrow the original publication error.
+In `catch`, if staging creation began, close only handles owned by this invocation, preserve staging evidence without any path-based delete/remove, and throw exactly `PREVIEW_STAGING_PRESERVED`. Do not include raw paths or command diagnostics. Before staging creation, rethrow the original sanitized validation/path error.
 
 - [ ] **Step 4: Refactor `New-WpaRun` to delegate without changing its signature**
 
