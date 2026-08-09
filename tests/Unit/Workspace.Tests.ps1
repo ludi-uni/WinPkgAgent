@@ -31,26 +31,6 @@ Describe 'WinPkgAgent run workspace boundaries' {
             (Get-Command Invoke-WpaPlan).Parameters.Keys | Should -Not -Contain 'Force'
         }
 
-        It 'initializes run inventory from the copied run-local policy' {
-            $manifestPath = Join-Path $TestDrive 'manifest.yaml'
-            $policyPath = Join-Path $TestDrive 'source-policy.yaml'
-            Set-Content -LiteralPath $manifestPath -Value 'packages: []' -NoNewline
-            Set-Content -LiteralPath $policyPath -Value 'schemaVersion: 1' -NoNewline
-            $script:inventoryPolicyPath = $null
-            Mock Read-WpaYamlFile { [pscustomobject]@{profiles=@()} }
-            Mock Get-WpaInventory {
-                param([string]$PolicyPath)
-                $script:inventoryPolicyPath = $PolicyPath
-                [pscustomobject]@{schemaVersion=1;environment=@{id='env'};status='success';managers=@();packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
-            }
-            Mock New-WpaPlan { [pscustomobject]@{manifestHash='manifest';policyHash='policy'} }
-
-            $run = New-WpaRun -ManifestPath $manifestPath -PolicyPath $policyPath -WorkspacePath (Join-Path $TestDrive 'workspace') -Now ([datetimeoffset]'2026-08-08T01:02:03Z')
-
-            $script:inventoryPolicyPath | Should -Be (Get-WpaRunArtifactPath -RunPath (Split-Path $script:inventoryPolicyPath -Parent) -Artifact policy)
-            $script:inventoryPolicyPath | Should -Not -Be $policyPath
-        }
-
         It 'forwards the explicit policy path when resuming verification' {
             $script:inventoryPolicyPath = $null
             $plan = [pscustomobject]@{planId='plan-1';actions=@([pscustomobject]@{manager='scoop';id='tool'})}
@@ -300,6 +280,226 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 })
                 Compare-Object -ReferenceObject $before -DifferenceObject $after | Should -BeNullOrEmpty
                 Test-Path (Join-Path $TestDrive '.wpa') | Should -BeFalse
+                Should -Invoke Write-WpaAtomicJson -Times 0 -Exactly
+                Should -Invoke Write-WpaAtomicText -Times 0 -Exactly
+                Should -Invoke New-Item -Times 0 -Exactly
+            }
+        }
+
+        Context 'prepared run publication' {
+            BeforeEach {
+                $script:preparedRun = [pscustomobject][ordered]@{
+                    schemaVersion = 1
+                    runId = '20260809-010203-aabbccdd'
+                    createdAt = '2026-08-09T01:02:03.0000000Z'
+                    manifestHash = ('a' * 64)
+                    policyHash = ('b' * 64)
+                    manifestPath = 'manifest.yaml'
+                    policyPath = 'policy.yaml'
+                    inventoryPath = 'inventory.json'
+                    planPath = 'plan.json'
+                    approvalPath = 'approval.json'
+                    applyResultPath = 'apply-result.json'
+                    verifyResultPath = 'verify-result.json'
+                    journalPath = 'journal.json'
+                    summaryPath = 'summary.md'
+                    currentStage = 'planned'
+                }
+                $script:preparation = [pscustomobject][ordered]@{
+                    manifestText = "schemaVersion: 1`nprofiles:`n  - base`npackages: []`n"
+                    policyText = "schemaVersion: 1`n"
+                    profiles = @([pscustomobject]@{name='base';text="schemaVersion: 1`nprofiles: []`npackages: []`n"})
+                    inventory = [pscustomobject]@{status='success'}
+                    plan = [pscustomobject]@{
+                        planId = 'plan-1'
+                        expiresAt = '2026-08-09T01:32:03.0000000Z'
+                        actions = @()
+                        blockedOperations = @()
+                        warnings = @()
+                        planHash = ('c' * 64)
+                    }
+                    run = $script:preparedRun
+                }
+                Mock Test-WpaDataSchema { $true }
+                Mock Assert-WpaPlanActionSet { $true }
+                Mock Assert-WpaPlanIntegrity { $true }
+            }
+
+            It 'publishes exact prepared artifacts and returns the unchanged run only after preparation succeeds' {
+                Mock New-WpaRunPreparation {
+                    param($ManifestPath, $PolicyPath, $RunId, $Now)
+                    $script:preparation.run.runId = $RunId
+                    $script:preparation
+                }
+                $workspace = Join-Path $TestDrive 'workspace-published'
+
+                $run = New-WpaRun -ManifestPath manifest.yaml -PolicyPath policy.yaml -WorkspacePath $workspace -Now ([datetimeoffset]'2026-08-08T01:02:03Z')
+
+                [object]::ReferenceEquals($run, $script:preparation.run) | Should -BeTrue
+                $final = Join-Path $workspace "runs/$($run.runId)"
+                [IO.File]::ReadAllText((Join-Path $final 'manifest.yaml')) | Should -BeExactly $script:preparation.manifestText
+                [IO.File]::ReadAllText((Join-Path $final 'policy.yaml')) | Should -BeExactly $script:preparation.policyText
+                [IO.File]::ReadAllText((Join-Path $final 'profiles/base.yaml')) | Should -BeExactly $script:preparation.profiles[0].text
+                foreach ($artifact in @('run.json','inventory.json','plan.json','plan.md')) {
+                    Test-Path (Join-Path $final $artifact) | Should -BeTrue
+                }
+                foreach ($artifact in @('approval.json','apply-result.json','verify-result.json','journal.json','summary.md')) {
+                    Test-Path (Join-Path $final $artifact) | Should -BeFalse
+                }
+                Get-ChildItem (Join-Path $workspace 'runs') -Directory -Filter '.staging-*' | Should -BeNullOrEmpty
+            }
+
+            It 'leaves no workspace when preparation fails' {
+                Mock New-WpaRunPreparation { throw 'simulated preparation failure' }
+                $workspace = Join-Path $TestDrive 'workspace-preparation-failure'
+
+                { New-WpaRun -ManifestPath manifest.yaml -PolicyPath policy.yaml -WorkspacePath $workspace } |
+                    Should -Throw 'simulated preparation failure'
+
+                Test-Path $workspace | Should -BeFalse
+            }
+
+            It 'removes only its owned staging directory when publication fails' {
+                $workspace = Join-Path $TestDrive 'workspace-publication-failure'
+                $runs = Join-Path $workspace 'runs'
+                $unrelated = Join-Path $runs '.staging-unrelated'
+                [IO.Directory]::CreateDirectory($unrelated) | Out-Null
+                [IO.File]::WriteAllText((Join-Path $unrelated 'keep.txt'), 'keep')
+                Mock Write-WpaAtomicJson { throw 'simulated publication failure' } -ParameterFilter { $Path -like '*plan.json' }
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw 'simulated publication failure'
+
+                Test-Path (Join-Path $runs $script:preparedRun.runId) | Should -BeFalse
+                Test-Path (Join-Path $runs ".staging-$($script:preparedRun.runId)") | Should -BeFalse
+                [IO.File]::ReadAllText((Join-Path $unrelated 'keep.txt')) | Should -BeExactly 'keep'
+            }
+
+            It 'rejects an existing final path before writing staged artifacts' {
+                $workspace = Join-Path $TestDrive 'workspace-existing-final'
+                $final = Join-Path $workspace "runs/$($script:preparedRun.runId)"
+                [IO.Directory]::CreateDirectory($final) | Out-Null
+                [IO.File]::WriteAllText((Join-Path $final 'keep.txt'), 'keep')
+                Mock Write-WpaAtomicText { throw 'WRITE_CALLED' }
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw '*already exists*'
+
+                [IO.File]::ReadAllText((Join-Path $final 'keep.txt')) | Should -BeExactly 'keep'
+            }
+
+            It 'rejects an existing staging path before writing staged artifacts' {
+                $workspace = Join-Path $TestDrive 'workspace-existing-staging'
+                $staging = Join-Path $workspace "runs/.staging-$($script:preparedRun.runId)"
+                [IO.Directory]::CreateDirectory($staging) | Out-Null
+                [IO.File]::WriteAllText((Join-Path $staging 'keep.txt'), 'keep')
+                Mock Write-WpaAtomicText { throw 'WRITE_CALLED' }
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw '*already exists*'
+
+                [IO.File]::ReadAllText((Join-Path $staging 'keep.txt')) | Should -BeExactly 'keep'
+            }
+
+            It 'validates the staged plan before publishing the final directory' {
+                $workspace = Join-Path $TestDrive 'workspace-invalid-plan'
+                Mock Assert-WpaPlanIntegrity { throw 'STAGED_PLAN_INVALID' }
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw 'STAGED_PLAN_INVALID'
+
+                Test-Path (Join-Path $workspace "runs/$($script:preparedRun.runId)") | Should -BeFalse
+                Test-Path (Join-Path $workspace "runs/.staging-$($script:preparedRun.runId)") | Should -BeFalse
+            }
+
+            It 'revalidates profile names before creating the staging directory' {
+                $workspace = Join-Path $TestDrive 'workspace-invalid-profile'
+                $script:preparation.profiles = @([pscustomobject]@{name='Bad_Profile';text='unsafe'})
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw 'Invalid profile name.'
+
+                Test-Path $workspace | Should -BeFalse
+            }
+
+            It 'refuses cleanup when the staging parent is not the owned runs directory' {
+                $runs = Join-Path $TestDrive 'runs-cleanup-parent'
+                $outside = Join-Path $TestDrive '.staging-20260809-010203-aabbccdd'
+                [IO.Directory]::CreateDirectory($runs) | Out-Null
+                [IO.Directory]::CreateDirectory($outside) | Out-Null
+
+                { Remove-WpaOwnedRunStagingDirectory -StagingPath $outside -RunsPath $runs -ExpectedLeaf '.staging-20260809-010203-aabbccdd' } |
+                    Should -Throw 'PREVIEW_STAGING_CLEANUP_FAILED: OWNERSHIP_NOT_PROVEN'
+
+                Test-Path $outside | Should -BeTrue
+            }
+
+            It 'refuses cleanup when the staging leaf is not the generated leaf' {
+                $runs = Join-Path $TestDrive 'runs-cleanup-leaf'
+                $other = Join-Path $runs '.staging-other'
+                [IO.Directory]::CreateDirectory($other) | Out-Null
+
+                { Remove-WpaOwnedRunStagingDirectory -StagingPath $other -RunsPath $runs -ExpectedLeaf '.staging-20260809-010203-aabbccdd' } |
+                    Should -Throw 'PREVIEW_STAGING_CLEANUP_FAILED: OWNERSHIP_NOT_PROVEN'
+
+                Test-Path $other | Should -BeTrue
+            }
+
+            It 'refuses cleanup when the owned staging directory is a reparse point' {
+                $runs = Join-Path $TestDrive 'runs-cleanup-reparse'
+                $staging = Join-Path $runs '.staging-20260809-010203-aabbccdd'
+                [IO.Directory]::CreateDirectory($staging) | Out-Null
+                Mock Get-Item {
+                    [pscustomobject]@{FullName=$staging;PSIsContainer=$true;Attributes=[IO.FileAttributes]::ReparsePoint}
+                } -ParameterFilter { $LiteralPath -eq $staging }
+
+                { Remove-WpaOwnedRunStagingDirectory -StagingPath $staging -RunsPath $runs -ExpectedLeaf '.staging-20260809-010203-aabbccdd' } |
+                    Should -Throw 'PREVIEW_STAGING_CLEANUP_FAILED: STAGING_REPARSE_POINT'
+
+                Test-Path $staging | Should -BeTrue
+            }
+
+            It 'sanitizes cleanup deletion failures without exposing the staging path' {
+                $runs = Join-Path $TestDrive 'runs-cleanup-delete'
+                $staging = Join-Path $runs '.staging-20260809-010203-aabbccdd'
+                [IO.Directory]::CreateDirectory($staging) | Out-Null
+                Mock Remove-Item { throw "cannot delete $Path" } -ParameterFilter { $LiteralPath -eq $staging }
+
+                $message = try {
+                    Remove-WpaOwnedRunStagingDirectory -StagingPath $staging -RunsPath $runs -ExpectedLeaf '.staging-20260809-010203-aabbccdd'
+                    ''
+                } catch {
+                    $_.Exception.Message
+                }
+
+                $message | Should -BeExactly 'PREVIEW_STAGING_CLEANUP_FAILED: DELETE_FAILED'
+                $message | Should -Not -Match ([regex]::Escape($TestDrive))
+                Test-Path $staging | Should -BeTrue
+            }
+
+            It 'returns only the future final path on WhatIf without preparation or filesystem mutation' {
+                $workspace = Join-Path $TestDrive 'workspace-whatif'
+                Mock New-WpaRunPreparation { throw 'PREPARATION_CALLED' }
+                Mock Test-WpaEnvironmentForPolicy { throw 'ENVIRONMENT_CALLED' }
+                Mock Get-WpaInventoryForPolicy { throw 'INVENTORY_CALLED' }
+                Mock Test-WpaWingetAvailable { throw 'WINGET_CALLED' }
+                Mock Test-WpaScoopAvailable { throw 'SCOOP_CALLED' }
+                Mock Write-WpaAtomicJson { throw 'JSON_WRITE_CALLED' }
+                Mock Write-WpaAtomicText { throw 'TEXT_WRITE_CALLED' }
+                Mock New-Item { throw 'DIRECTORY_CREATE_CALLED' }
+
+                $result = New-WpaRun -ManifestPath missing-manifest.yaml -PolicyPath missing-policy.yaml -WorkspacePath $workspace -Now ([datetimeoffset]'2026-08-08T01:02:03Z') -WhatIf
+
+                @($result.PSObject.Properties.Name) | Should -Be @('runPath','whatIf')
+                $result.whatIf | Should -BeTrue
+                Split-Path $result.runPath -Parent | Should -Be (Join-Path ([IO.Path]::GetFullPath($workspace)) 'runs')
+                Split-Path $result.runPath -Leaf | Should -Match '^20260808-010203-[a-f0-9]{8}$'
+                Test-Path $workspace | Should -BeFalse
+                Should -Invoke New-WpaRunPreparation -Times 0 -Exactly
+                Should -Invoke Test-WpaEnvironmentForPolicy -Times 0 -Exactly
+                Should -Invoke Get-WpaInventoryForPolicy -Times 0 -Exactly
+                Should -Invoke Test-WpaWingetAvailable -Times 0 -Exactly
+                Should -Invoke Test-WpaScoopAvailable -Times 0 -Exactly
                 Should -Invoke Write-WpaAtomicJson -Times 0 -Exactly
                 Should -Invoke Write-WpaAtomicText -Times 0 -Exactly
                 Should -Invoke New-Item -Times 0 -Exactly

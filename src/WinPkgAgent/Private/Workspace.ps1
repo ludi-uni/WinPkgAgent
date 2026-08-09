@@ -29,15 +29,11 @@ function Read-WpaRun {
 function New-WpaRun {
     [CmdletBinding(SupportsShouldProcess)]
     param([Parameter(Mandatory)][string]$ManifestPath,[Parameter(Mandatory)][string]$PolicyPath,[string]$WorkspacePath='./.wpa',[datetimeoffset]$Now=[datetimeoffset]::UtcNow)
-    $workspace=[IO.Path]::GetFullPath($WorkspacePath);$cursor=$workspace;while($cursor){$item=Get-Item -LiteralPath $cursor -Force -ErrorAction SilentlyContinue;if($null -ne $item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Workspace paths may not contain reparse points.'};$next=Split-Path $cursor -Parent;if($next -eq $cursor){break};$cursor=$next};$runs=Join-Path $workspace 'runs';$stamp=$Now.ToUniversalTime().ToString('yyyyMMdd-HHmmss');$runId=($stamp+'-'+([guid]::NewGuid().ToString('N').Substring(0,8)));$runPath=Join-Path $runs $runId
+    $workspace=Resolve-WpaTrustedWorkspacePath -WorkspacePath $WorkspacePath;$runs=Join-Path $workspace 'runs';$stamp=$Now.ToUniversalTime().ToString('yyyyMMdd-HHmmss');$runId=($stamp+'-'+([guid]::NewGuid().ToString('N').Substring(0,8)));$runPath=Join-Path $runs $runId
     if(-not $PSCmdlet.ShouldProcess($runPath,'Create WinPkgAgent run workspace')){return [pscustomobject]@{runPath=$runPath;whatIf=$true}}
-    if(Test-Path -LiteralPath $runPath){throw 'Run workspace already exists.'};[IO.Directory]::CreateDirectory($runPath)|Out-Null
-    $manifestText=Read-WpaTextFile -Path $ManifestPath;$policyText=Read-WpaTextFile -Path $PolicyPath;Write-WpaAtomicText (Get-WpaRunArtifactPath $runPath manifest) $manifestText;Write-WpaAtomicText (Get-WpaRunArtifactPath $runPath policy) $policyText
-    $manifest=Read-WpaYamlFile -Path $ManifestPath;$sourceManifestDirectory=Split-Path ([IO.Path]::GetFullPath($ManifestPath)) -Parent;$profileNames=@(Get-WpaPropertyValue $manifest 'profiles' @());if($profileNames.Count -gt 0){$profileDirectory=Join-Path $runPath 'profiles';[IO.Directory]::CreateDirectory($profileDirectory)|Out-Null;foreach($profileName in $profileNames){if($profileName -notmatch '^[a-z0-9][a-z0-9-]{0,31}$'){throw 'Invalid profile name.'};$profileCandidates=@((Join-Path $sourceManifestDirectory "profiles/$profileName.yaml"),(Join-Path $sourceManifestDirectory "../profiles/$profileName.yaml"),(Join-Path $sourceManifestDirectory "../profiles/$profileName.example.yaml"));$profileSource=$profileCandidates|Where-Object {Test-Path -LiteralPath $_}|Select-Object -First 1;if(-not $profileSource){throw "Profile not found: $profileName"};Write-WpaAtomicText (Join-Path $profileDirectory "$profileName.yaml") (Read-WpaTextFile -Path $profileSource)}}
-    $inventory=Get-WpaInventory -PolicyPath (Get-WpaRunArtifactPath $runPath policy);Write-WpaAtomicJson (Get-WpaRunArtifactPath $runPath inventory) $inventory
-    $plan=New-WpaPlan -ManifestPath (Get-WpaRunArtifactPath $runPath manifest) -PolicyPath (Get-WpaRunArtifactPath $runPath policy) -InventoryPath (Get-WpaRunArtifactPath $runPath inventory) -OutputPath (Get-WpaRunArtifactPath $runPath plan) -MarkdownPath (Get-WpaRunArtifactPath $runPath planMarkdown)
-    $run=[pscustomobject][ordered]@{schemaVersion=1;runId=$runId;createdAt=$Now.ToUniversalTime().ToString('o');manifestHash=$plan.manifestHash;policyHash=$plan.policyHash;manifestPath='manifest.yaml';policyPath='policy.yaml';inventoryPath='inventory.json';planPath='plan.json';approvalPath='approval.json';applyResultPath='apply-result.json';verifyResultPath='verify-result.json';journalPath='journal.json';summaryPath='summary.md';currentStage='planned'}
-    Write-WpaAtomicJson (Get-WpaRunArtifactPath $runPath run) $run;return $run
+    $preparation=New-WpaRunPreparation -ManifestPath $ManifestPath -PolicyPath $PolicyPath -Now $Now -RunId $runId
+    Publish-WpaPreparedRun -Preparation $preparation -WorkspacePath $workspace | Out-Null
+    return $preparation.run
 }
 
 function Get-WpaRun { [CmdletBinding()]param([Parameter(Mandatory)][string]$RunPath) Read-WpaRun $RunPath }
