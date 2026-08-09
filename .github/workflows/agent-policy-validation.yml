@@ -1,1 +1,47 @@
-name: Agent policy validation  on:   pull_request:     paths:       - AGENTS.md       - docs/agent-policy.md       - docs/issue-spec.md       - .github/ISSUE_TEMPLATE/**       - .github/PULL_REQUEST_TEMPLATE.md       - .github/pull_request_template.md       - .github/workflows/agent-policy-validation.yml  permissions:   contents: read  concurrency:   group: agent-policy-${{ github.workflow }}-${{ github.ref }}   cancel-in-progress: true  jobs:   validate:     runs-on: ubuntu-latest     timeout-minutes: 5     steps:       - name: Check out repository         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683       - name: Validate adopted policy files         shell: bash         run: |           set -euo pipefail           for file in \             AGENTS.md \             docs/agent-policy.md \             docs/issue-spec.md \             .github/ISSUE_TEMPLATE/agent-task.md; do             test -s "$file" || { echo "Missing or empty: $file"; exit 1; }           done           test -s .github/ISSUE_TEMPLATE/bug.md \             || test -s .github/ISSUE_TEMPLATE/bug_report.md           test -s .github/ISSUE_TEMPLATE/feature.md \             || test -s .github/ISSUE_TEMPLATE/feature_request.md           test -s .github/PULL_REQUEST_TEMPLATE.md \             || test -s .github/pull_request_template.md           grep -Fq 'Never push directly' AGENTS.md           grep -Fq 'Draft Pull Request' AGENTS.md           grep -Eq 'high[- ]risk' AGENTS.md
+name: Agent policy validation
+
+on:
+  pull_request:
+    paths:
+      - AGENTS.md
+      - docs/agent-policy.md
+      - docs/issue-spec.md
+      - .github/ISSUE_TEMPLATE/**
+      - .github/PULL_REQUEST_TEMPLATE.md
+      - .github/pull_request_template.md
+      - .github/workflows/agent-policy-validation.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-policy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Validate adopted policy files
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in \
+            AGENTS.md \
+            docs/agent-policy.md \
+            docs/issue-spec.md \
+            .github/ISSUE_TEMPLATE/agent-task.md; do
+            test -s "$file" || { echo "Missing or empty: $file"; exit 1; }
+          done
+          test -s .github/ISSUE_TEMPLATE/bug.md \
+            || test -s .github/ISSUE_TEMPLATE/bug_report.md
+          test -s .github/ISSUE_TEMPLATE/feature.md \
+            || test -s .github/ISSUE_TEMPLATE/feature_request.md
+          test -s .github/PULL_REQUEST_TEMPLATE.md \
+            || test -s .github/pull_request_template.md
+          grep -Fq 'Never push directly' AGENTS.md
+          grep -Fq 'Draft Pull Request' AGENTS.md
+          grep -Eq 'high[- ]risk' AGENTS.md
