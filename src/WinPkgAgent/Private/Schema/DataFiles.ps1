@@ -21,14 +21,19 @@ function Read-WpaJsonFile {
     try { return $text | ConvertFrom-Json -Depth 100 } catch { throw "Invalid JSON file: $($_.Exception.Message)" }
 }
 
-function Read-WpaYamlFile {
+function ConvertFrom-WpaYamlText {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Path)
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
     $yamlModule = Get-Module -ListAvailable -Name powershell-yaml | Where-Object Version -GE ([version]'0.4.12') | Select-Object -First 1
     if (-not $yamlModule) { throw 'powershell-yaml 0.4.12 or newer is required. Install it explicitly after reviewing the dependency documentation.' }
     Import-Module $yamlModule.Path -ErrorAction Stop
-    $text = Read-WpaTextFile -Path $Path
-    try { return ConvertFrom-Yaml -Yaml $text -Ordered } catch { throw "Invalid YAML file: $($_.Exception.Message)" }
+    try { return ConvertFrom-Yaml -Yaml $Text -Ordered } catch { throw "Invalid YAML file: $($_.Exception.Message)" }
+}
+
+function Read-WpaYamlFile {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    return ConvertFrom-WpaYamlText -Text (Read-WpaTextFile -Path $Path)
 }
 
 function Test-WpaIso8601Timestamp {
