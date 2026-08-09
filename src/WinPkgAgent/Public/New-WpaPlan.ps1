@@ -9,27 +9,7 @@ function New-WpaPlan {
     if(-not $MarkdownPath){$MarkdownPath=[IO.Path]::ChangeExtension($OutputPath,'.md')}
     $policy=Read-WpaPolicyFile $PolicyPath; Test-WpaDataSchema $policy policy | Out-Null
     $inventory=ConvertTo-WpaInventoryBoundary (Read-WpaJsonFile $InventoryPath); Test-WpaDataSchema $inventory inventory | Out-Null
-    $policyHash=Get-WpaObjectHash $policy
-    $inventoryPolicyHash=[string](Get-WpaPropertyValue $inventory 'policyHash')
-    $managerScope=@(Get-WpaPropertyValue $inventory 'managerScope' @() | ForEach-Object {[string]$_})
-    $allowedDeclaredManagers=@($manifest.packages | ForEach-Object { [string](Get-WpaPropertyValue $_ 'manager') } | Where-Object { $_ -in @($policy.allowedManagers) } | Sort-Object -Unique)
-    if($inventoryPolicyHash -ne $policyHash -or @($allowedDeclaredManagers | Where-Object { $_ -notin $managerScope }).Count -gt 0){throw 'INVENTORY_SCOPE_MISMATCH'}
-    foreach($manager in $allowedDeclaredManagers){
-        $inventoryManager=@($inventory.managers | Where-Object { (Get-WpaPropertyValue $_ 'manager') -eq $manager } | Select-Object -First 1)
-        if($inventoryManager.Count -eq 0){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $manager"}
-        Assert-WpaManagerFingerprintEvidence -Manager $manager -Fingerprint (Get-WpaPropertyValue $inventoryManager[0] 'fingerprint') | Out-Null
-    }
-    $evaluation=Get-WpaPlanEvaluation -Manifest $manifest -Policy $policy -Inventory $inventory
-    $expires=$Now.AddMinutes([int]$policy.approvalValidityMinutes)
-    $plan=[pscustomobject][ordered]@{
-        schemaVersion=1;toolVersion='0.1.0';planId=[guid]::NewGuid().ToString();createdAt=$Now.ToUniversalTime().ToString('o');expiresAt=$expires.ToUniversalTime().ToString('o')
-        environmentId=$inventory.environment.id;manifestHash=(Get-WpaObjectHash $manifest);policyHash=(Get-WpaObjectHash $policy);inventoryHash=(Get-WpaInventoryStateHash $inventory);managerFingerprints=@($inventory.managers | ForEach-Object {[pscustomobject]@{manager=$_.manager;fingerprint=(Get-WpaPropertyValue $_ 'fingerprint')}})
-        actions=@($evaluation.actions);blockedOperations=@($evaluation.blockedOperations);warnings=@($evaluation.warnings);contentHash=$null;planHash=$null
-    }
-    $plan.contentHash=Get-WpaObjectHash (Get-WpaPlanContent $plan)
-    $plan.planHash=Get-WpaObjectHash (Get-WpaPlanHashInput $plan)
-    Assert-WpaPlanActionSet -Actions @($plan.actions) | Out-Null
-    Test-WpaDataSchema $plan plan | Out-Null
+    $plan=New-WpaPlanObject -Manifest $manifest -Policy $policy -Inventory $inventory -Now $Now
     if($PSCmdlet.ShouldProcess($OutputPath,'Write immutable plan artifact')){Write-WpaAtomicJson $OutputPath $plan}
     if($MarkdownPath -and $PSCmdlet.ShouldProcess($MarkdownPath,'Write human-readable plan')){Write-WpaAtomicText $MarkdownPath (ConvertTo-WpaPlanMarkdown $plan)}
     return $plan

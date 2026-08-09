@@ -13,6 +13,38 @@ Describe 'WinPkgAgent planning' {
             }
         }
 
+        It 'builds a file-free plan object from resolved inputs with stable hash fields' {
+            $manifest = [pscustomobject]@{ packages=@([pscustomobject]@{ name='vscode'; manager='winget'; id='Microsoft.VisualStudioCode'; state='present'; version='latest'; source='winget' }) }
+            $fingerprint = [pscustomobject]@{
+                manager='winget'; pathHash=('a'*64); fileSha256=('b'*64); fileVersion=$null
+                lastWriteTimeUtc='2026-01-01T00:00:00Z'; fileLength=7; isReparsePoint=$false
+                signatureStatus='valid'; signerSubject='fixture'; aclAssessment='trusted'
+            }
+            $policyHash = Get-WpaObjectHash $policy
+            $inventory = [pscustomobject]@{
+                schemaVersion=2; policyHash=$policyHash; managerScope=@('winget'); status='success'
+                environment=[pscustomobject]@{ id='env' }
+                managers=@([pscustomobject]@{ manager='winget'; status='success'; version='1'; fingerprint=$fingerprint })
+                packages=@(); warnings=@(); collectedAt='2026-01-01T00:00:00Z'
+            }
+            $now = [datetimeoffset]'2026-01-02T03:04:05+00:00'
+
+            $plan = New-WpaPlanObject -Manifest $manifest -Policy $policy -Inventory $inventory -Now $now
+
+            $plan.schemaVersion | Should -Be 1
+            $plan.toolVersion | Should -Be '0.1.0'
+            $plan.environmentId | Should -Be 'env'
+            $plan.createdAt | Should -Be '2026-01-02T03:04:05.0000000+00:00'
+            $plan.expiresAt | Should -Be '2026-01-02T03:34:05.0000000+00:00'
+            $plan.actions[0].reasonCode | Should -Be 'PACKAGE_NOT_INSTALLED'
+            $plan.managerFingerprints[0].fingerprint.manager | Should -Be 'winget'
+            $plan.manifestHash | Should -Match '^[a-f0-9]{64}$'
+            $plan.policyHash | Should -Match '^[a-f0-9]{64}$'
+            $plan.inventoryHash | Should -Match '^[a-f0-9]{64}$'
+            $plan.contentHash | Should -Match '^[a-f0-9]{64}$'
+            $plan.planHash | Should -Match '^[a-f0-9]{64}$'
+        }
+
         It 'plans an install with a stable reason code' {
             $manifest = [pscustomobject]@{ packages=@([pscustomobject]@{ name='vscode'; manager='winget'; id='Microsoft.VisualStudioCode'; state='present'; version='latest'; source='winget' }) }
             $inventory = [pscustomobject]@{ status='success'; environment=@{id='env'}; managers=@(@{manager='winget';status='success';version='1'}); packages=@() }
