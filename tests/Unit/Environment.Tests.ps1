@@ -15,11 +15,10 @@ Describe 'policy-aware environment readiness' {
 
         It 'does not probe excluded WinGet for a ready Scoop-only policy' {
             $policy = [pscustomobject]@{ schemaVersion = 1; allowedManagers = @('scoop'); runtime = [pscustomobject]@{ powershellPath = 'C:\fixture\pwsh.exe' } }
-            Mock Read-WpaPolicyFile { $policy }
             Mock Test-WpaScoopAvailable { $true }
             Mock Test-WpaWingetAvailable { throw 'excluded WinGet manager was probed' }
 
-            $result = Test-WpaEnvironment -PolicyPath 'codex-policy.yaml'
+            $result = Test-WpaEnvironmentForPolicy -Policy $policy -PowerShellPath $null
 
             $result.ready | Should -BeTrue
             $result.managers.scoop | Should -BeTrue
@@ -27,6 +26,21 @@ Describe 'policy-aware environment readiness' {
             Should -Invoke Test-WpaScoopAvailable -Times 1 -Exactly
             Should -Invoke Test-WpaWingetAvailable -Times 0 -Exactly
             Should -Invoke Get-WpaPowerShellRuntimeInfo -ParameterFilter { $PowerShellPath -eq 'C:\fixture\pwsh.exe' } -Times 1 -Exactly
+        }
+
+        It 'delegates public policy loading to the parsed-policy environment builder' {
+            $policy = [pscustomobject]@{ schemaVersion = 1; allowedManagers = @('scoop') }
+            $expected = [pscustomobject]@{ ready = $true }
+            Mock Read-WpaPolicyFile { $policy }
+            Mock Test-WpaEnvironmentForPolicy { $expected }
+
+            $result = Test-WpaEnvironment -PolicyPath 'codex-policy.yaml' -PowerShellPath 'C:\explicit\pwsh.exe'
+
+            $result | Should -Be $expected
+            Should -Invoke Read-WpaPolicyFile -Times 1 -Exactly
+            Should -Invoke Test-WpaEnvironmentForPolicy -ParameterFilter {
+                [object]::ReferenceEquals($Policy, $policy) -and $PowerShellPath -eq 'C:\explicit\pwsh.exe'
+            } -Times 1 -Exactly
         }
 
         It 'is not ready when an allowed desktop manager is unavailable' {

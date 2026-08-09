@@ -96,7 +96,6 @@ Describe 'inventory aggregation' {
         InModuleScope WinPkgAgent {
             $script:aggregateArgs = $null
             $policy = [pscustomobject]@{allowedManagers=@('scoop')}
-            Mock Read-WpaPolicyFile { $policy }
             Mock Test-WpaDataSchema { $true }
             Mock Get-WpaObjectHash { 'c' * 64 }
             Mock Get-WpaInventoryAggregate {
@@ -104,9 +103,27 @@ Describe 'inventory aggregation' {
                 $script:aggregateArgs = [pscustomobject]@{Managers=@($Managers);PolicyHash=$PolicyHash}
                 [pscustomobject]@{schemaVersion=2;policyHash=$PolicyHash;managerScope=@('scoop');environment=[pscustomobject]@{id='env'};collectedAt='2026-08-08T00:00:00Z';status='success';managers=@();packages=@();warnings=@()}
             }
-            Get-WpaInventory -PolicyPath 'policy.yaml' | Out-Null
+            $inventory = Get-WpaInventoryForPolicy -Policy $policy
             @($script:aggregateArgs.Managers) | Should -Be @('scoop')
             $script:aggregateArgs.PolicyHash | Should -Be ('c' * 64)
+            $inventory.policyHash | Should -Be ('c' * 64)
+        }
+    }
+
+    It 'delegates public inventory loading to the parsed-policy inventory builder' {
+        InModuleScope WinPkgAgent {
+            $policy = [pscustomobject]@{allowedManagers=@('scoop')}
+            $expected = [pscustomobject]@{schemaVersion=2;status='success'}
+            Mock Read-WpaPolicyFile { $policy }
+            Mock Get-WpaInventoryForPolicy { $expected }
+
+            $result = Get-WpaInventory -PolicyPath 'policy.yaml'
+
+            $result | Should -Be $expected
+            Should -Invoke Read-WpaPolicyFile -Times 1 -Exactly
+            Should -Invoke Get-WpaInventoryForPolicy -ParameterFilter {
+                [object]::ReferenceEquals($Policy, $policy)
+            } -Times 1 -Exactly
         }
     }
 
