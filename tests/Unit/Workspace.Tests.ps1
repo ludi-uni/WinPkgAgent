@@ -346,6 +346,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 foreach ($artifact in @('approval.json','apply-result.json','verify-result.json','journal.json','summary.md')) {
                     Test-Path (Join-Path $final $artifact) | Should -BeFalse
                 }
+                Test-Path (Join-Path $final '.wpa-staging-owner') | Should -BeFalse
                 Get-ChildItem (Join-Path $workspace 'runs') -Directory -Filter '.staging-*' | Should -BeNullOrEmpty
             }
 
@@ -373,6 +374,67 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Test-Path (Join-Path $runs $script:preparedRun.runId) | Should -BeFalse
                 Test-Path (Join-Path $runs ".staging-$($script:preparedRun.runId)") | Should -BeFalse
                 [IO.File]::ReadAllText((Join-Path $unrelated 'keep.txt')) | Should -BeExactly 'keep'
+            }
+
+            It 'refuses a staging directory claimed by a competing exclusive owner and never deletes it' {
+                $workspace = Join-Path $TestDrive 'workspace-ownership-race'
+                $runs = Join-Path $workspace 'runs'
+                $staging = Join-Path $runs ".staging-$($script:preparedRun.runId)"
+                $ownerMarker = Join-Path $staging '.wpa-staging-owner'
+                $foreignFile = Join-Path $staging 'foreign.txt'
+                $script:raceInjected = $false
+                $script:stagingProbeCount = 0
+                Mock Test-Path {
+                    $script:stagingProbeCount++
+                    if (-not $script:raceInjected -and $script:stagingProbeCount -eq 2) {
+                        $script:raceInjected = $true
+                        [IO.Directory]::CreateDirectory($staging) | Out-Null
+                        [IO.File]::WriteAllText($ownerMarker, 'foreign-owner-token')
+                        [IO.File]::WriteAllText($foreignFile, 'preserve')
+                        return $false
+                    }
+                    [IO.Directory]::Exists($LiteralPath) -or [IO.File]::Exists($LiteralPath)
+                } -ParameterFilter { $LiteralPath -eq $staging }
+                Mock Remove-Item {}
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw 'PREVIEW_STAGING_OWNERSHIP_NOT_ACQUIRED'
+
+                [IO.File]::ReadAllText($ownerMarker) | Should -BeExactly 'foreign-owner-token'
+                [IO.File]::ReadAllText($foreignFile) | Should -BeExactly 'preserve'
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
+            It 'refuses cleanup without removal when runs ancestry becomes a reparse point after ownership' {
+                $workspace = Join-Path $TestDrive 'workspace-ancestry-transition'
+                $runs = Join-Path $workspace 'runs'
+                $staging = Join-Path $runs ".staging-$($script:preparedRun.runId)"
+                $ownerMarker = Join-Path $staging '.wpa-staging-owner'
+                $firstOwnedArtifact = Join-Path $staging 'manifest.yaml'
+                Mock Get-Item {
+                    if ([IO.File]::Exists($firstOwnedArtifact)) {
+                        return [pscustomobject]@{
+                            FullName = $runs
+                            PSIsContainer = $true
+                            Attributes = [IO.FileAttributes]::ReparsePoint
+                            Parent = [pscustomobject]@{FullName=$workspace}
+                        }
+                    }
+                    [pscustomobject]@{
+                        FullName = $runs
+                        PSIsContainer = $true
+                        Attributes = [IO.FileAttributes]::Directory
+                        Parent = [pscustomobject]@{FullName=$workspace}
+                    }
+                } -ParameterFilter { $LiteralPath -eq $runs }
+                Mock Write-WpaAtomicJson { throw 'simulated publication failure' } -ParameterFilter { $Path -like '*plan.json' }
+                Mock Remove-Item {}
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw 'PREVIEW_STAGING_CLEANUP_FAILED: UNTRUSTED_ANCESTRY'
+
+                [IO.Directory]::Exists($staging) | Should -BeTrue
+                Should -Invoke Remove-Item -Times 0 -Exactly
             }
 
             It 'rejects an existing final path before writing staged artifacts' {
@@ -412,6 +474,18 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Test-Path (Join-Path $workspace "runs/.staging-$($script:preparedRun.runId)") | Should -BeFalse
             }
 
+            It 'calls the action-set validator exactly once for an empty staged plan before move' {
+                $workspace = Join-Path $TestDrive 'workspace-empty-action-validation'
+                Mock Invoke-WpaStagedPlanActionSetValidation { throw 'EMPTY_ACTION_SET_VALIDATION_GUARD' }
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw 'EMPTY_ACTION_SET_VALIDATION_GUARD'
+
+                Test-Path (Join-Path $workspace "runs/$($script:preparedRun.runId)") | Should -BeFalse
+                Should -Invoke Invoke-WpaStagedPlanActionSetValidation -Times 1 -Exactly
+                Should -Invoke Assert-WpaPlanIntegrity -Times 0 -Exactly
+            }
+
             It 'revalidates profile names before creating the staging directory' {
                 $workspace = Join-Path $TestDrive 'workspace-invalid-profile'
                 $script:preparation.profiles = @([pscustomobject]@{name='Bad_Profile';text='unsafe'})
@@ -423,53 +497,79 @@ Describe 'WinPkgAgent run workspace boundaries' {
             }
 
             It 'refuses cleanup when the staging parent is not the owned runs directory' {
-                $runs = Join-Path $TestDrive 'runs-cleanup-parent'
+                $workspace = Join-Path $TestDrive 'workspace-cleanup-parent'
+                $runs = Join-Path $workspace 'runs'
+                $staging = Join-Path $runs '.staging-20260809-010203-aabbccdd'
+                $ownership = New-WpaRunStagingOwnership -WorkspacePath $workspace -RunsPath $runs -StagingPath $staging -ExpectedLeaf '.staging-20260809-010203-aabbccdd'
                 $outside = Join-Path $TestDrive '.staging-20260809-010203-aabbccdd'
-                [IO.Directory]::CreateDirectory($runs) | Out-Null
                 [IO.Directory]::CreateDirectory($outside) | Out-Null
+                $ownership.StagingPath = $outside
 
-                { Remove-WpaOwnedRunStagingDirectory -StagingPath $outside -RunsPath $runs -ExpectedLeaf '.staging-20260809-010203-aabbccdd' } |
-                    Should -Throw 'PREVIEW_STAGING_CLEANUP_FAILED: OWNERSHIP_NOT_PROVEN'
+                try {
+                    { Remove-WpaOwnedRunStagingDirectory -Ownership $ownership } |
+                        Should -Throw 'PREVIEW_STAGING_CLEANUP_FAILED: OWNERSHIP_NOT_PROVEN'
+                } finally {
+                    $ownership.Stream.Dispose()
+                }
 
                 Test-Path $outside | Should -BeTrue
             }
 
             It 'refuses cleanup when the staging leaf is not the generated leaf' {
-                $runs = Join-Path $TestDrive 'runs-cleanup-leaf'
-                $other = Join-Path $runs '.staging-other'
-                [IO.Directory]::CreateDirectory($other) | Out-Null
-
-                { Remove-WpaOwnedRunStagingDirectory -StagingPath $other -RunsPath $runs -ExpectedLeaf '.staging-20260809-010203-aabbccdd' } |
-                    Should -Throw 'PREVIEW_STAGING_CLEANUP_FAILED: OWNERSHIP_NOT_PROVEN'
-
-                Test-Path $other | Should -BeTrue
-            }
-
-            It 'refuses cleanup when the owned staging directory is a reparse point' {
-                $runs = Join-Path $TestDrive 'runs-cleanup-reparse'
+                $workspace = Join-Path $TestDrive 'workspace-cleanup-leaf'
+                $runs = Join-Path $workspace 'runs'
                 $staging = Join-Path $runs '.staging-20260809-010203-aabbccdd'
-                [IO.Directory]::CreateDirectory($staging) | Out-Null
-                Mock Get-Item {
-                    [pscustomobject]@{FullName=$staging;PSIsContainer=$true;Attributes=[IO.FileAttributes]::ReparsePoint}
-                } -ParameterFilter { $LiteralPath -eq $staging }
+                $ownership = New-WpaRunStagingOwnership -WorkspacePath $workspace -RunsPath $runs -StagingPath $staging -ExpectedLeaf '.staging-20260809-010203-aabbccdd'
+                $ownership.ExpectedLeaf = '.staging-other'
 
-                { Remove-WpaOwnedRunStagingDirectory -StagingPath $staging -RunsPath $runs -ExpectedLeaf '.staging-20260809-010203-aabbccdd' } |
-                    Should -Throw 'PREVIEW_STAGING_CLEANUP_FAILED: STAGING_REPARSE_POINT'
+                try {
+                    { Remove-WpaOwnedRunStagingDirectory -Ownership $ownership } |
+                        Should -Throw 'PREVIEW_STAGING_CLEANUP_FAILED: OWNERSHIP_NOT_PROVEN'
+                } finally {
+                    $ownership.Stream.Dispose()
+                }
 
                 Test-Path $staging | Should -BeTrue
             }
 
-            It 'sanitizes cleanup deletion failures without exposing the staging path' {
-                $runs = Join-Path $TestDrive 'runs-cleanup-delete'
+            It 'refuses cleanup when the owned staging directory is a reparse point' {
+                $workspace = Join-Path $TestDrive 'workspace-cleanup-reparse'
+                $runs = Join-Path $workspace 'runs'
                 $staging = Join-Path $runs '.staging-20260809-010203-aabbccdd'
-                [IO.Directory]::CreateDirectory($staging) | Out-Null
-                Mock Remove-Item { throw "cannot delete $Path" } -ParameterFilter { $LiteralPath -eq $staging }
+                $ownership = New-WpaRunStagingOwnership -WorkspacePath $workspace -RunsPath $runs -StagingPath $staging -ExpectedLeaf '.staging-20260809-010203-aabbccdd'
+                Mock Get-Item {
+                    [pscustomobject]@{FullName=$staging;PSIsContainer=$true;Attributes=[IO.FileAttributes]::ReparsePoint;Parent=[pscustomobject]@{FullName=$runs}}
+                } -ParameterFilter { $LiteralPath -eq $staging }
+                Mock Remove-Item {}
+
+                try {
+                    { Remove-WpaOwnedRunStagingDirectory -Ownership $ownership } |
+                        Should -Throw 'PREVIEW_STAGING_CLEANUP_FAILED: UNTRUSTED_ANCESTRY'
+                } finally {
+                    $ownership.Stream.Dispose()
+                }
+
+                Test-Path $staging | Should -BeTrue
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
+            It 'sanitizes cleanup deletion failures without exposing the staging path' {
+                $workspace = Join-Path $TestDrive 'workspace-cleanup-delete'
+                $runs = Join-Path $workspace 'runs'
+                $staging = Join-Path $runs '.staging-20260809-010203-aabbccdd'
+                $ownership = New-WpaRunStagingOwnership -WorkspacePath $workspace -RunsPath $runs -StagingPath $staging -ExpectedLeaf '.staging-20260809-010203-aabbccdd'
+                $ownedFile = Join-Path $staging 'plan.json'
+                [IO.File]::WriteAllText($ownedFile, '{}')
+                $ownership.OwnedFiles.Add([IO.Path]::GetFullPath($ownedFile)) | Out-Null
+                Mock Remove-Item { throw "cannot delete $LiteralPath" } -ParameterFilter { $LiteralPath -eq $ownedFile }
 
                 $message = try {
-                    Remove-WpaOwnedRunStagingDirectory -StagingPath $staging -RunsPath $runs -ExpectedLeaf '.staging-20260809-010203-aabbccdd'
+                    Remove-WpaOwnedRunStagingDirectory -Ownership $ownership
                     ''
                 } catch {
                     $_.Exception.Message
+                } finally {
+                    $ownership.Stream.Dispose()
                 }
 
                 $message | Should -BeExactly 'PREVIEW_STAGING_CLEANUP_FAILED: DELETE_FAILED'
@@ -487,6 +587,13 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Mock Write-WpaAtomicJson { throw 'JSON_WRITE_CALLED' }
                 Mock Write-WpaAtomicText { throw 'TEXT_WRITE_CALLED' }
                 Mock New-Item { throw 'DIRECTORY_CREATE_CALLED' }
+                Mock Resolve-WpaTrustedWorkspacePath { throw 'WORKSPACE_RESOLVER_CALLED' }
+                Mock Resolve-Path { throw 'RESOLVE_PATH_CALLED' }
+                Mock Test-Path { throw 'TEST_PATH_CALLED' }
+                Mock Get-Item { throw 'GET_ITEM_CALLED' }
+                Mock Get-ChildItem { throw 'GET_CHILD_ITEM_CALLED' }
+                Mock Read-WpaTextFile { throw 'TEXT_READ_CALLED' }
+                Mock Read-WpaJsonFile { throw 'JSON_READ_CALLED' }
 
                 $result = New-WpaRun -ManifestPath missing-manifest.yaml -PolicyPath missing-policy.yaml -WorkspacePath $workspace -Now ([datetimeoffset]'2026-08-08T01:02:03Z') -WhatIf
 
@@ -494,7 +601,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 $result.whatIf | Should -BeTrue
                 Split-Path $result.runPath -Parent | Should -Be (Join-Path ([IO.Path]::GetFullPath($workspace)) 'runs')
                 Split-Path $result.runPath -Leaf | Should -Match '^20260808-010203-[a-f0-9]{8}$'
-                Test-Path $workspace | Should -BeFalse
+                [IO.Directory]::Exists($workspace) | Should -BeFalse
                 Should -Invoke New-WpaRunPreparation -Times 0 -Exactly
                 Should -Invoke Test-WpaEnvironmentForPolicy -Times 0 -Exactly
                 Should -Invoke Get-WpaInventoryForPolicy -Times 0 -Exactly
@@ -503,6 +610,13 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Should -Invoke Write-WpaAtomicJson -Times 0 -Exactly
                 Should -Invoke Write-WpaAtomicText -Times 0 -Exactly
                 Should -Invoke New-Item -Times 0 -Exactly
+                Should -Invoke Resolve-WpaTrustedWorkspacePath -Times 0 -Exactly
+                Should -Invoke Resolve-Path -Times 0 -Exactly
+                Should -Invoke Test-Path -Times 0 -Exactly
+                Should -Invoke Get-Item -Times 0 -Exactly
+                Should -Invoke Get-ChildItem -Times 0 -Exactly
+                Should -Invoke Read-WpaTextFile -Times 0 -Exactly
+                Should -Invoke Read-WpaJsonFile -Times 0 -Exactly
             }
         }
     }

@@ -29,8 +29,9 @@ function Read-WpaRun {
 function New-WpaRun {
     [CmdletBinding(SupportsShouldProcess)]
     param([Parameter(Mandatory)][string]$ManifestPath,[Parameter(Mandatory)][string]$PolicyPath,[string]$WorkspacePath='./.wpa',[datetimeoffset]$Now=[datetimeoffset]::UtcNow)
-    $workspace=Resolve-WpaTrustedWorkspacePath -WorkspacePath $WorkspacePath;$runs=Join-Path $workspace 'runs';$stamp=$Now.ToUniversalTime().ToString('yyyyMMdd-HHmmss');$runId=($stamp+'-'+([guid]::NewGuid().ToString('N').Substring(0,8)));$runPath=Join-Path $runs $runId
+    $workspace=[IO.Path]::GetFullPath($WorkspacePath);$runs=Join-Path $workspace 'runs';$stamp=$Now.ToUniversalTime().ToString('yyyyMMdd-HHmmss');$runId=($stamp+'-'+([guid]::NewGuid().ToString('N').Substring(0,8)));$runPath=Join-Path $runs $runId
     if(-not $PSCmdlet.ShouldProcess($runPath,'Create WinPkgAgent run workspace')){return [pscustomobject]@{runPath=$runPath;whatIf=$true}}
+    $workspace=Resolve-WpaTrustedWorkspacePath -WorkspacePath $workspace
     $preparation=New-WpaRunPreparation -ManifestPath $ManifestPath -PolicyPath $PolicyPath -Now $Now -RunId $runId
     Publish-WpaPreparedRun -Preparation $preparation -WorkspacePath $workspace | Out-Null
     return $preparation.run
