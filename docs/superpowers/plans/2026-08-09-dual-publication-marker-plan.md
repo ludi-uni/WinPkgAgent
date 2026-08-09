@@ -26,7 +26,7 @@
 
 ---
 
-### Task 1: Introduce independent guard and pending ownership
+### Task 1: Implement the immutable guard and separate pending marker
 
 **Files:**
 - Modify: `src/WinPkgAgent/Private/Workspace/RunPublication.ps1:553-678`
@@ -90,22 +90,22 @@ Do not rename the guard in either constructor.
 
 For `.wpa-publication-pending`, hash through `PublicationPendingMarker.GetSha256()` while that handle is open. Dispose `PublicationPendingMarker` and `PublicationGuard` independently in `Close-WpaRunStagingOwnershipHandles`, then dispose the directory handle. Do not delete marker paths.
 
-- [ ] **Step 5: Run the workspace suite and verify GREEN for Task 1**
+- [ ] **Step 5: Run the ownership-focused tests and verify GREEN for Phase A**
 
 Run the command from Step 2.
 
-Expected: the new ownership and sharing tests pass; later completion tests may remain RED until Task 3.
+Expected: the new ownership and sharing tests pass. Continue the same uncommitted TDD task with the next failing behavior.
 
 ---
 
-### Task 2: Keep the guard fixed through evidence quarantine
+#### Phase B: Keep the guard fixed through evidence quarantine
 
 **Files:**
 - Modify: `src/WinPkgAgent/Private/Workspace/RunPublication.ps1:778-819`
 - Test: `tests/Unit/Workspace.Tests.ps1:769-841`
 
 **Interfaces:**
-- Consumes: Task 1's independent marker handles and existing handle-bound directory `Rename`.
+- Consumes: Phase A's independent marker handles and existing handle-bound directory `Rename`.
 - Produces: `Move-WpaOwnedRunToStagingEvidence` behavior that moves only the pending marker and owned directory while `PublicationGuardPath` remains continuously present.
 
 - [ ] **Step 1: Write a deterministic failing interleaving test**
@@ -149,14 +149,14 @@ Expected: all evidence and consumer tests pass.
 
 ---
 
-### Task 3: Complete pending first and release guard last
+#### Phase C: Complete pending first and release guard last
 
 **Files:**
 - Modify: `src/WinPkgAgent/Private/Workspace/RunPublication.ps1:821-947`
 - Test: `tests/Unit/Workspace.Tests.ps1:843-863` and the successful publication test near line 490
 
 **Interfaces:**
-- Consumes: both independent marker handles and final owned-content validation.
+- Consumes: both independent marker handles from Phase A and final owned-content validation.
 - Produces: `Complete-WpaOwnedRunPublication -Ownership <object> -FinalPath <string>`; `.wpa-publication-guard-complete` rename is the only publication point.
 
 - [ ] **Step 1: Write failing completion-order tests**
@@ -201,7 +201,7 @@ Assert-WpaOwnedStagingContents -Ownership $ownership -BasePath $finalPath -Owner
 Complete-WpaOwnedRunPublication -Ownership $ownership -FinalPath $finalPath
 ```
 
-On post-rename validation failure, call the Task 2 evidence helper while the guard remains fixed. On pre-rename failure, preserve staging and attempt an exact-handle guard move into that staging directory only when the canonical final path was never created; if that move fails, leave the sibling guard untouched. All outward failures remain `PREVIEW_STAGING_PRESERVED`.
+On post-rename validation failure, call the Phase B evidence helper while the guard remains fixed. On pre-rename failure, preserve staging and attempt an exact-handle guard move into that staging directory only when the canonical final path was never created; if that move fails, leave the sibling guard untouched. All outward failures remain `PREVIEW_STAGING_PRESERVED`.
 
 - [ ] **Step 5: Run focused affected tests**
 
@@ -222,10 +222,10 @@ Before committing, inspect `git diff --cached --name-only` and abort if either u
 
 ---
 
-### Task 4: Verify and submit the bounded fix
+### Task 2: Verify and submit the bounded fix
 
 **Files:**
-- Review only: the Task 1–3 files
+- Review only: the Task 1 implementation files
 - Preserve: `src/WinPkgAgent/Private/Adapters/Scoop.ps1`, `tests/Contract/Manager.Tests.ps1`
 
 **Interfaces:**
