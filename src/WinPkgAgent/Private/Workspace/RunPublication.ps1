@@ -4,6 +4,7 @@ using System;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace WinPkgAgent.Native
@@ -14,7 +15,6 @@ namespace WinPkgAgent.Native
         private const uint ReadAttributesAccess = 0x00000080;
         private const uint FileShareRead = 0x00000001;
         private const uint FileShareWrite = 0x00000002;
-        private const uint FileShareDelete = 0x00000004;
         private const uint FileCreate = 0x00000002;
         private const uint FileDirectoryFile = 0x00000001;
         private const uint FileAttributeDirectory = 0x00000010;
@@ -101,7 +101,7 @@ namespace WinPkgAgent.Native
                     out ioStatusBlock,
                     IntPtr.Zero,
                     FileAttributeDirectory,
-                    FileShareRead | FileShareWrite | FileShareDelete,
+                    FileShareRead | FileShareWrite,
                     FileCreate,
                     FileDirectoryFile,
                     IntPtr.Zero,
@@ -191,6 +191,48 @@ namespace WinPkgAgent.Native
             }
         }
 
+        public string GetFinalPath()
+        {
+            if (!IsOpen)
+            {
+                throw new InvalidOperationException("Directory ownership handle is closed.");
+            }
+
+            uint capacity = 260;
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                StringBuilder buffer = new StringBuilder(checked((int)capacity));
+                uint length = GetFinalPathNameByHandle(handle, buffer, capacity, 0);
+                if (length == 0)
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+                if (length < capacity)
+                {
+                    return NormalizeFinalPath(buffer.ToString());
+                }
+                if (length > 32768)
+                {
+                    throw new IOException("Owned directory path is too long.");
+                }
+                capacity = checked(length + 1);
+            }
+            throw new IOException("Owned directory path could not be resolved.");
+        }
+
+        private static string NormalizeFinalPath(string path)
+        {
+            if (path.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+            {
+                return Path.GetFullPath(@"\\" + path.Substring(8));
+            }
+            if (path.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase))
+            {
+                return Path.GetFullPath(path.Substring(4));
+            }
+            return Path.GetFullPath(path);
+        }
+
         public void Dispose()
         {
             if (handle != null)
@@ -221,6 +263,14 @@ namespace WinPkgAgent.Native
             int fileInformationClass,
             IntPtr fileInformation,
             uint bufferSize);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true,
+            EntryPoint = "GetFinalPathNameByHandleW")]
+        private static extern uint GetFinalPathNameByHandle(
+            SafeFileHandle fileHandle,
+            StringBuilder filePath,
+            uint filePathLength,
+            uint flags);
     }
 }
 '@
@@ -658,17 +708,65 @@ function New-WpaOwnedPublicationGuard {
     }
 }
 
+function Assert-WpaOwnedPublishedDirectoryTrust {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Ownership,
+        [Parameter(Mandatory)][string]$FinalPath
+    )
+
+    try {
+        if ($null -eq $Ownership.DirectoryHandle -or -not $Ownership.DirectoryHandle.IsOpen) {
+            throw 'directory handle unavailable'
+        }
+        $workspaceFull = [IO.Path]::GetFullPath([string]$Ownership.WorkspacePath)
+        $runsFull = [IO.Path]::GetFullPath([string]$Ownership.RunsPath)
+        $finalFull = [IO.Path]::GetFullPath($FinalPath)
+        $handleFull = [IO.Path]::GetFullPath([string]$Ownership.DirectoryHandle.GetFinalPath())
+        if (-not [string]::Equals([IO.Path]::GetDirectoryName($runsFull), $workspaceFull, [StringComparison]::OrdinalIgnoreCase) -or
+            -not [string]::Equals([IO.Path]::GetDirectoryName($finalFull), $runsFull, [StringComparison]::OrdinalIgnoreCase) -or
+            -not [string]::Equals($handleFull, $finalFull, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'published directory identity mismatch'
+        }
+
+        Assert-WpaTrustedPublicationAncestry -WorkspacePath $workspaceFull -RunsPath $runsFull -StagingPath $finalFull -StagingMustExist | Out-Null
+        $finalItem = Get-Item -LiteralPath $finalFull -Force -ErrorAction Stop
+        if (-not $finalItem.PSIsContainer -or
+            ($finalItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            -not [string]::Equals($finalItem.Parent.FullName, $runsFull, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'published directory is not trusted'
+        }
+
+        $expectedGuardPath = [IO.Path]::GetFullPath((Join-Path $runsFull ".wpa-publication-guard-$([IO.Path]::GetFileName($finalFull))"))
+        $guardFull = [IO.Path]::GetFullPath([string]$Ownership.PublicationGuardPath)
+        if ($null -eq $Ownership.PublicationGuard -or -not $Ownership.PublicationGuard.IsOpen -or
+            -not [string]::Equals($guardFull, $expectedGuardPath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'publication guard identity mismatch'
+        }
+        $guardItem = Get-Item -LiteralPath $guardFull -Force -ErrorAction Stop
+        if ($guardItem.PSIsContainer -or
+            ($guardItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            -not [string]::Equals($guardItem.Directory.FullName, $runsFull, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'publication guard is not trusted'
+        }
+    } catch {
+        throw 'PREVIEW_STAGING_PRESERVED'
+    }
+    return $true
+}
+
 function New-WpaOwnedPublicationPendingMarker {
     [CmdletBinding()]
     param([Parameter(Mandatory)][object]$Ownership,[Parameter(Mandatory)][string]$FinalPath)
 
+    $finalFull = [IO.Path]::GetFullPath($FinalPath)
+    Assert-WpaOwnedPublishedDirectoryTrust -Ownership $Ownership -FinalPath $finalFull | Out-Null
     if ($null -eq $Ownership.PublicationGuard -or -not $Ownership.PublicationGuard.IsOpen -or
         [string]::IsNullOrWhiteSpace([string]$Ownership.PublicationGuardPath) -or
         -not [string]::Equals([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Ownership.PublicationGuardPath)), $Ownership.RunsPath, [StringComparison]::OrdinalIgnoreCase) -or
         -not (Test-Path -LiteralPath $Ownership.PublicationGuardPath -ErrorAction Stop)) {
         throw 'Owned publication guard identity is unavailable.'
     }
-    $finalFull = [IO.Path]::GetFullPath($FinalPath)
     if (-not [string]::Equals([IO.Path]::GetDirectoryName($finalFull), $Ownership.RunsPath, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'Published run path is not trusted.'
     }
@@ -702,12 +800,7 @@ function Assert-WpaOwnedStagingContents {
 
     $baseFull = [IO.Path]::GetFullPath($BasePath)
     if ($OwnershipReleased) {
-        if ($null -eq $Ownership.DirectoryHandle -or -not $Ownership.DirectoryHandle.IsOpen) { throw 'Owned directory handle is not available.' }
-        $baseItem = Get-Item -LiteralPath $baseFull -Force -ErrorAction Stop
-        if (-not $baseItem.PSIsContainer -or ($baseItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-            -not [string]::Equals($baseItem.Parent.FullName, $Ownership.RunsPath, [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'Published owned directory path is not trusted.'
-        }
+        Assert-WpaOwnedPublishedDirectoryTrust -Ownership $Ownership -FinalPath $baseFull | Out-Null
     } else {
         Assert-WpaOwnedRunStagingTrust -Ownership $Ownership | Out-Null
         if (-not [string]::Equals($baseFull, $Ownership.StagingPath, [StringComparison]::OrdinalIgnoreCase)) {
@@ -853,6 +946,7 @@ function Complete-WpaOwnedRunPublication {
         throw 'Owned publication marker identity is unavailable.'
     }
     $finalFull = [IO.Path]::GetFullPath($FinalPath)
+    Assert-WpaOwnedPublishedDirectoryTrust -Ownership $Ownership -FinalPath $finalFull | Out-Null
     if (-not [string]::Equals([IO.Path]::GetDirectoryName($finalFull), $Ownership.RunsPath, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'Published run path is not trusted.'
     }
@@ -864,6 +958,7 @@ function Complete-WpaOwnedRunPublication {
         throw 'Completed publication marker path is not trusted.'
     }
     $originalPendingPath = [string]$Ownership.PublicationPendingPath
+    Assert-WpaOwnedPublishedDirectoryTrust -Ownership $Ownership -FinalPath $finalFull | Out-Null
     $Ownership.PublicationPendingMarker.Rename($pendingCompletePath)
     $Ownership.PublicationPendingPath = $pendingCompletePath
     if ((Test-Path -LiteralPath $originalPendingPath -ErrorAction Stop) -or
@@ -871,6 +966,7 @@ function Complete-WpaOwnedRunPublication {
         -not (Test-Path -LiteralPath $Ownership.PublicationGuardPath -ErrorAction Stop)) {
         throw 'Publication marker completion could not be verified.'
     }
+    Assert-WpaOwnedPublishedDirectoryTrust -Ownership $Ownership -FinalPath $finalFull | Out-Null
     $Ownership.PublicationGuard.Rename($guardCompletePath)
     if ((Test-Path -LiteralPath $Ownership.PublicationGuardPath -ErrorAction Stop) -or
         (Test-Path -LiteralPath $originalPendingPath -ErrorAction Stop) -or
@@ -964,6 +1060,7 @@ function Publish-WpaPreparedRun {
         $ownership.Stream = $null
         Assert-WpaStagingOwnershipMarkerReleased -Ownership $ownership | Out-Null
         Move-WpaOwnedRunStagingDirectory -Ownership $ownership -FinalPath $finalPath
+        Assert-WpaOwnedPublishedDirectoryTrust -Ownership $ownership -FinalPath $finalPath | Out-Null
         New-WpaOwnedPublicationPendingMarker -Ownership $ownership -FinalPath $finalPath | Out-Null
         try {
             Assert-WpaOwnedStagingContents -Ownership $ownership -BasePath $finalPath -OwnershipReleased | Out-Null

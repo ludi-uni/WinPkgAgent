@@ -552,6 +552,188 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 }
             }
 
+            It 'keeps directory and ancestor renames blocked while the owned handle is open' {
+                $workspace = Join-Path $TestDrive 'directory-share-mode/workspace'
+                $runs = Join-Path $workspace 'runs'
+                $staging = Join-Path $runs '.staging-20260809-010203-aabbccdd'
+                $final = Join-Path $runs '20260809-010203-aabbccdd'
+                $evidence = Join-Path $runs '.staging-evidence-20260809-010203-aabbccdd-deadbeef'
+                $markerEvidence = Join-Path $runs '.publication-marker-evidence'
+                $afterClose = Join-Path $runs '.staging-after-close'
+                [IO.Directory]::CreateDirectory($runs) | Out-Null
+                $handle = New-WpaOwnedDirectoryHandleAtomically -Path $staging
+                $marker = $null
+                try {
+                    $handle.Rename($final)
+                    [IO.File]::WriteAllText((Join-Path $final 'child.txt'), 'owned')
+                    $marker = [WinPkgAgent.Native.OwnedPublicationMarker]::CreateAtomically(
+                        (Join-Path $final '.wpa-publication-pending'), 'token')
+                    $marker.Rename((Join-Path $final '.wpa-publication-complete'))
+
+                    { [IO.Directory]::Move($final, (Join-Path $runs 'displaced-leaf')) } | Should -Throw
+                    { [IO.Directory]::Move($runs, (Join-Path $workspace 'displaced-runs')) } | Should -Throw
+                    { [IO.Directory]::Move($workspace, (Join-Path $TestDrive 'displaced-workspace')) } | Should -Throw
+
+                    $marker.Rename($markerEvidence)
+                    $handle.Rename($evidence)
+                    $marker.Rename((Join-Path $evidence '.wpa-publication-complete'))
+                    Test-Path (Join-Path $evidence 'child.txt') | Should -BeTrue
+                    Test-Path (Join-Path $evidence '.wpa-publication-complete') | Should -BeTrue
+                } finally {
+                    if ($null -ne $marker) { $marker.Dispose() }
+                    if ($null -ne $handle) { $handle.Dispose() }
+                }
+                [IO.Directory]::Move($evidence, $afterClose)
+                Test-Path $afterClose | Should -BeTrue
+            }
+
+            It 'blocks canonical displacement before pending marker creation' {
+                $workspace = Join-Path $TestDrive 'pending-attack-workspace'
+                $runs = Join-Path $workspace 'runs'
+                $staging = Join-Path $runs ".staging-$($script:preparedRun.runId)"
+                $final = Join-Path $runs $script:preparedRun.runId
+                $outside = Join-Path $TestDrive 'pending-attack-outside'
+                $displaced = Join-Path $runs '.displaced-owned-run'
+                [IO.Directory]::CreateDirectory($outside) | Out-Null
+                $ownership = New-WpaRunStagingOwnership -WorkspacePath $workspace -RunsPath $runs -StagingPath $staging -ExpectedLeaf ".staging-$($script:preparedRun.runId)"
+                try {
+                    New-WpaOwnedPublicationGuard -Ownership $ownership -RunId $script:preparedRun.runId | Out-Null
+                    $ownership.Stream.Dispose()
+                    $ownership.Stream = $null
+                    $ownership.DirectoryHandle.Rename($final)
+                    $attackSucceeded = $false
+                    try {
+                        [IO.Directory]::Move($final, $displaced)
+                        New-Item -ItemType Junction -Path $final -Target $outside -ErrorAction Stop | Out-Null
+                        $attackSucceeded = $true
+                    } catch {
+                        $attackSucceeded = $false
+                    }
+                    New-WpaOwnedPublicationPendingMarker -Ownership $ownership -FinalPath $final | Out-Null
+
+                    $attackSucceeded | Should -BeFalse
+                    Test-Path (Join-Path $outside '.wpa-publication-pending') | Should -BeFalse
+                    Test-Path (Join-Path $final '.wpa-publication-pending') | Should -BeTrue
+                    Test-Path $ownership.PublicationGuardPath | Should -BeTrue
+                } finally {
+                    Close-WpaRunStagingOwnershipHandles -Ownership $ownership
+                }
+            }
+
+            It 'blocks canonical displacement immediately before guard release' {
+                $workspace = Join-Path $TestDrive 'guard-release-workspace'
+                $runs = Join-Path $workspace 'runs'
+                $staging = Join-Path $runs ".staging-$($script:preparedRun.runId)"
+                $final = Join-Path $runs $script:preparedRun.runId
+                $outside = Join-Path $TestDrive 'guard-release-outside'
+                $displaced = Join-Path $runs '.displaced-owned-run'
+                [IO.Directory]::CreateDirectory($outside) | Out-Null
+                $ownership = New-WpaRunStagingOwnership -WorkspacePath $workspace -RunsPath $runs -StagingPath $staging -ExpectedLeaf ".staging-$($script:preparedRun.runId)"
+                try {
+                    New-WpaOwnedPublicationGuard -Ownership $ownership -RunId $script:preparedRun.runId | Out-Null
+                    $ownership.Stream.Dispose()
+                    $ownership.Stream = $null
+                    $ownership.DirectoryHandle.Rename($final)
+                    New-WpaOwnedPublicationPendingMarker -Ownership $ownership -FinalPath $final | Out-Null
+                    $ownership.PublicationGuard.Dispose()
+                    $guard = [pscustomobject]@{
+                        IsOpen = $true
+                        DisplacementSucceeded = $false
+                        DisplacementBlocked = $false
+                        SourcePath = $ownership.PublicationGuardPath
+                    }
+                    $guard | Add-Member ScriptMethod Rename {
+                        param($DestinationPath)
+                        try {
+                            [IO.Directory]::Move($final, $displaced)
+                            New-Item -ItemType Junction -Path $final -Target $outside -ErrorAction Stop | Out-Null
+                            $this.DisplacementSucceeded = $true
+                        } catch {
+                            $this.DisplacementBlocked = $true
+                        }
+                        [IO.File]::Move($this.SourcePath, $DestinationPath)
+                        $this.SourcePath = $DestinationPath
+                    }
+                    $guard | Add-Member ScriptMethod Dispose { $this.IsOpen = $false }
+                    $ownership.PublicationGuard = $guard
+
+                    Complete-WpaOwnedRunPublication -Ownership $ownership -FinalPath $final
+
+                    $guard.DisplacementSucceeded | Should -BeFalse
+                    $guard.DisplacementBlocked | Should -BeTrue
+                    Test-Path (Join-Path $outside '.wpa-publication-guard-complete') | Should -BeFalse
+                    Test-Path (Join-Path $final '.wpa-publication-guard-complete') | Should -BeTrue
+                } finally {
+                    Close-WpaRunStagingOwnershipHandles -Ownership $ownership
+                }
+            }
+
+            It 'rejects a handle-derived final-path mismatch before pending creation' {
+                $workspace = Join-Path $TestDrive 'pending-mismatch-workspace'
+                $runs = Join-Path $workspace 'runs'
+                $final = Join-Path $runs $script:preparedRun.runId
+                [IO.Directory]::CreateDirectory($final) | Out-Null
+                $guardPath = Join-Path $runs ".wpa-publication-guard-$($script:preparedRun.runId)"
+                [IO.File]::WriteAllText($guardPath, 'guard')
+                $ownership = [pscustomobject]@{
+                    WorkspacePath = $workspace
+                    RunsPath = $runs
+                    Token = 'token'
+                    DirectoryHandle = $null
+                    PublicationGuard = [pscustomobject]@{ IsOpen = $true }
+                    PublicationGuardPath = $guardPath
+                    PublicationPendingMarker = $null
+                    PublicationPendingPath = $null
+                    PublicationPendingHash = $null
+                    ExpectedFileHashes = @{}
+                    OwnedFiles = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+                }
+                $directory = [pscustomobject]@{ IsOpen = $true; FinalPath = (Join-Path $runs 'different-run') }
+                $directory | Add-Member ScriptMethod GetFinalPath { $this.FinalPath }
+                $ownership.DirectoryHandle = $directory
+
+                $message = try {
+                    New-WpaOwnedPublicationPendingMarker -Ownership $ownership -FinalPath $final
+                    ''
+                } catch { $_.Exception.Message }
+
+                $message | Should -BeExactly 'PREVIEW_STAGING_PRESERVED'
+                $message | Should -Not -Match ([regex]::Escape($TestDrive))
+                Test-Path (Join-Path $final '.wpa-publication-pending') | Should -BeFalse
+            }
+
+            It 'rejects a canonical reparse point before pending creation' {
+                $workspace = Join-Path $TestDrive 'pending-reparse-workspace'
+                $runs = Join-Path $workspace 'runs'
+                $final = Join-Path $runs $script:preparedRun.runId
+                $outside = Join-Path $TestDrive 'pending-reparse-outside'
+                [IO.Directory]::CreateDirectory($runs) | Out-Null
+                [IO.Directory]::CreateDirectory($outside) | Out-Null
+                $guardPath = Join-Path $runs ".wpa-publication-guard-$($script:preparedRun.runId)"
+                [IO.File]::WriteAllText($guardPath, 'guard')
+                New-Item -ItemType Junction -Path $final -Target $outside -ErrorAction Stop | Out-Null
+                $directory = [pscustomobject]@{ IsOpen = $true; FinalPath = [IO.Path]::GetFullPath($final) }
+                $directory | Add-Member ScriptMethod GetFinalPath { $this.FinalPath }
+                $ownership = [pscustomobject]@{
+                    WorkspacePath = $workspace
+                    RunsPath = $runs
+                    Token = 'token'
+                    DirectoryHandle = $directory
+                    PublicationGuard = [pscustomobject]@{ IsOpen = $true }
+                    PublicationGuardPath = $guardPath
+                    PublicationPendingMarker = $null
+                    PublicationPendingPath = $null
+                    PublicationPendingHash = $null
+                    ExpectedFileHashes = @{}
+                    OwnedFiles = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+                }
+
+                { New-WpaOwnedPublicationPendingMarker -Ownership $ownership -FinalPath $final } |
+                    Should -Throw 'PREVIEW_STAGING_PRESERVED'
+                Test-Path (Join-Path $outside '.wpa-publication-pending') | Should -BeFalse
+                Test-Path $ownership.PublicationGuardPath | Should -BeTrue
+            }
+
             It 'rejects an atomic acquisition collision without changing or deleting the existing directory' {
                 $runs = Join-Path $TestDrive 'atomic-collision/runs'
                 $staging = Join-Path $runs '.staging-20260809-010203-aabbccdd'
@@ -1047,6 +1229,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Mock Read-WpaJsonFile { throw 'metadata must not run' }
                 Mock Approve-WpaPlan { throw 'approval must not run' }
                 Mock Invoke-WpaPlan { throw 'invoke must not run' }
+                Mock Assert-WpaOwnedPublishedDirectoryTrust { $true }
 
                 { Complete-WpaOwnedRunPublication -Ownership $ownership -FinalPath $final } |
                     Should -Throw '*pending completion failure*'
@@ -1086,6 +1269,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Mock Read-WpaJsonFile { throw 'metadata must not run' }
                 Mock Approve-WpaPlan { throw 'approval must not run' }
                 Mock Invoke-WpaPlan { throw 'invoke must not run' }
+                Mock Assert-WpaOwnedPublishedDirectoryTrust { $true }
 
                 { Complete-WpaOwnedRunPublication -Ownership $ownership -FinalPath $final } |
                     Should -Throw '*guard completion failure*'
@@ -1130,7 +1314,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Should -Invoke Remove-Item -Times 0 -Exactly
             }
 
-            It 'moves the owned directory object and never a deterministic staging-path replacement' {
+            It 'blocks deterministic staging-path replacement before publication' {
                 $workspace = Join-Path $TestDrive 'workspace-directory-substitution'
                 $runs = Join-Path $workspace 'runs'
                 $staging = Join-Path $runs ".staging-$($script:preparedRun.runId)"
@@ -1140,19 +1324,23 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Mock Assert-WpaStagingOwnershipMarkerReleased {
                     if (-not $script:directorySubstituted) {
                         $script:directorySubstituted = $true
-                        [IO.Directory]::Move($staging, $displacedOwned)
-                        [IO.Directory]::CreateDirectory($staging) | Out-Null
-                        [IO.File]::WriteAllText($foreignFile, 'preserve-replacement')
+                        try {
+                            [IO.Directory]::Move($staging, $displacedOwned)
+                            [IO.Directory]::CreateDirectory($staging) | Out-Null
+                            [IO.File]::WriteAllText($foreignFile, 'preserve-replacement')
+                        } catch {
+                            $script:directorySubstituted = $false
+                        }
                     }
                     $true
                 }
-
                 $published = Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace
 
                 $published | Should -Be (Join-Path $runs $script:preparedRun.runId)
+                $script:directorySubstituted | Should -BeFalse
                 [IO.File]::ReadAllText((Join-Path $published 'manifest.yaml')) | Should -BeExactly $script:preparation.manifestText
                 Test-Path (Join-Path $published 'foreign.txt') | Should -BeFalse
-                [IO.File]::ReadAllText($foreignFile) | Should -BeExactly 'preserve-replacement'
+                Test-Path $foreignFile | Should -BeFalse
                 Test-Path $displacedOwned | Should -BeFalse
                 Should -Invoke Assert-WpaStagingOwnershipMarkerReleased -Times 1 -Exactly
             }
