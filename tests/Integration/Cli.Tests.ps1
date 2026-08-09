@@ -127,14 +127,24 @@ Describe 'winpkg-agent CLI' {
         $docs | Should -Match 'MANAGER_UNAVAILABLE'
         $docs | Should -Match 'resume-verify[\s\S]*-PolicyPath'
 
-        $docs | Should -Match 'winpkg-agent\.ps1 preview[\s\S]*packages\.example\.yaml[\s\S]*policy\.codex\.yaml'
-        $docs | Should -Match 'preview[\s\S]*packages\.example\.yaml[\s\S]*policy\.(desktop|default)\.yaml'
-        $docs | Should -Match 'blockedReasons'
-        $docs | Should -Match 'exit code 2|終了コード.*2'
-        $docs | Should -Match 'show-run[\s\S]*approve-run[\s\S]*invoke-run[\s\S]*WhatIf'
-        $docs | Should -Match 'never approves|承認.*行いません'
-        $docs | Should -Match 'PREVIEW_STAGING_PRESERVED'
-        $docs | Should -Match 'inspect[\s\S]*manually|手動[\s\S]*確認'
+        $englishUsage = Get-Content (Join-Path $root 'docs/usage.md') -Raw
+        $englishUsage | Should -Match 'winpkg-agent\.ps1 preview[\s\S]*packages\.example\.yaml[\s\S]*policy\.codex\.yaml'
+        $englishUsage | Should -Match 'winpkg-agent\.ps1 preview[\s\S]*packages\.example\.yaml[\s\S]*policy\.desktop\.yaml'
+        $englishUsage | Should -Match 'blocked run with `blockedReasons`'
+        $englishUsage | Should -Match 'exit code `0`[\s\S]*`1`[\s\S]*`2`'
+        $englishUsage | Should -Match 'Preview never approves, applies, installs dependencies, mutates `PATH`, adds sources, elevates, or remaps managers\.'
+        $englishUsage | Should -Match 'show-run[\s\S]*approve-run[\s\S]*invoke-run[^\r\n]*-WhatIf[\s\S]*invoke-run -RunPath'
+
+        $japaneseUsage = Get-Content (Join-Path $root 'docs/usage.ja.md') -Raw
+        $japaneseUsage | Should -Match 'winpkg-agent\.ps1 preview[\s\S]*packages\.example\.yaml[\s\S]*policy\.codex\.yaml'
+        $japaneseUsage | Should -Match 'winpkg-agent\.ps1 preview[\s\S]*packages\.example\.yaml[\s\S]*policy\.desktop\.yaml'
+        $japaneseUsage | Should -Match '`blockedReasons`[\s\S]*確認可能なblocked run'
+        $japaneseUsage | Should -Match 'CLI終了コード.*`0`[\s\S]*`1`[\s\S]*`2`'
+        $japaneseUsage | Should -Match 'previewは承認、適用、依存関係の導入、`PATH`変更、source追加、昇格、managerのfallback/remapを行いません。'
+        $japaneseUsage | Should -Match 'show-run[\s\S]*approve-run[\s\S]*invoke-run[^\r\n]*-WhatIf[\s\S]*invoke-run -RunPath'
+
+        $troubleshooting = Get-Content (Join-Path $root 'docs/troubleshooting.md') -Raw
+        $troubleshooting | Should -Match 'PREVIEW_STAGING_PRESERVED[\s\S]*Inspect.*manually[\s\S]*automatic or recursive deletion'
 
         $samplePath = Join-Path $root 'examples/inventory.sample.json'
         $sample = Get-Content $samplePath -Raw | ConvertFrom-Json
