@@ -12,7 +12,7 @@ function Get-WpaRunArtifactPath {
     return $path
 }
 
-function Read-WpaRun {
+function Read-WpaRunMetadata {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$RunPath)
     $runFile=Get-WpaRunArtifactPath -RunPath $RunPath -Artifact run
@@ -24,6 +24,17 @@ function Read-WpaRun {
         if($declared -ne $expected){throw "Run artifact path is not fixed: $artifact"}
     }
     return $run
+}
+
+function Read-WpaRun {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RunPath)
+    $runFull=[IO.Path]::GetFullPath($RunPath)
+    $pendingPath=[IO.Path]::Combine($runFull,'.wpa-publication-pending')
+    $runLeaf=[IO.Path]::GetFileName($runFull.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar))
+    $guardPath=[IO.Path]::Combine([IO.Path]::GetDirectoryName($runFull),".wpa-publication-guard-$runLeaf")
+    if((Test-Path -LiteralPath $guardPath -ErrorAction Stop) -or (Test-Path -LiteralPath $pendingPath -ErrorAction Stop)){throw 'RUN_PUBLICATION_PENDING'}
+    Read-WpaRunMetadata -RunPath $runFull
 }
 
 function New-WpaRun {

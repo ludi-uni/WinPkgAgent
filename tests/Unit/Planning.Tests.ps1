@@ -218,18 +218,31 @@ Describe 'WinPkgAgent planning' {
                 Should -Throw '*MANAGER_FINGERPRINT_UNAVAILABLE: scoop*'
         }
 
-        It 'accepts only the exact selected-manager scope and fingerprints all selected managers' {
+        It 'accepts the desktop producer scope regardless of policy declaration order and fingerprints all selected managers' {
             $manifest=[pscustomobject]@{packages=@([pscustomobject]@{name='vscode';manager='winget';id='Microsoft.VisualStudioCode';state='present';version='latest';source='winget'})}
             $wingetFingerprint=[pscustomobject]@{manager='winget';signatureStatus='valid';aclAssessment='trusted'}
             $scoopFingerprint=[pscustomobject]@{manager='scoop';signatureStatus='not-applicable';aclAssessment='trusted'}
-            $inventory=[pscustomobject]@{schemaVersion=2;policyHash=(Get-WpaObjectHash $policy);managerScope=@('winget','scoop');environment=@{id='env'};status='success';managers=@(
-                [pscustomobject]@{manager='winget';status='success';version='1';fingerprint=$wingetFingerprint},
-                [pscustomobject]@{manager='scoop';status='success';version='1';fingerprint=$scoopFingerprint}
+            $inventory=[pscustomobject]@{schemaVersion=2;policyHash=(Get-WpaObjectHash $policy);managerScope=@('scoop','winget');environment=@{id='env'};status='success';managers=@(
+                [pscustomobject]@{manager='scoop';status='success';version='1';fingerprint=$scoopFingerprint},
+                [pscustomobject]@{manager='winget';status='success';version='1';fingerprint=$wingetFingerprint}
             );packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
             Mock Read-WpaManifestResolved {$manifest};Mock Test-WpaManifestObject {$true};Mock Read-WpaPolicyFile {$policy};Mock Read-WpaJsonFile {$inventory};Mock Test-WpaDataSchema {$true}
             $plan=New-WpaPlan -ManifestPath manifest.yaml -PolicyPath policy.yaml -InventoryPath inventory.json -OutputPath plan.json -WhatIf
-            @($plan.managerFingerprints.manager) | Should -BeExactly @('winget','scoop')
+            @($plan.managerFingerprints.manager) | Should -BeExactly @('scoop','winget')
             $plan.actions[0].classification | Should -BeExactly 'install'
+        }
+
+        It 'rejects fingerprint evidence labelled for a different manager' {
+            $policy.allowedManagers=@('scoop')
+            $manifest=[pscustomobject]@{packages=@([pscustomobject]@{name='tool';manager='scoop';id='tool';state='present';version='latest';source='main'})}
+            $wrongFingerprint=[pscustomobject]@{manager='winget';signatureStatus='not-applicable';aclAssessment='trusted'}
+            $inventory=[pscustomobject]@{schemaVersion=2;policyHash=(Get-WpaObjectHash $policy);managerScope=@('scoop');environment=@{id='env'};status='success';managers=@(
+                [pscustomobject]@{manager='scoop';status='success';version='1';fingerprint=$wrongFingerprint}
+            );packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
+            Mock Read-WpaManifestResolved {$manifest};Mock Test-WpaManifestObject {$true};Mock Read-WpaPolicyFile {$policy};Mock Read-WpaJsonFile {$inventory};Mock Test-WpaDataSchema {$true}
+
+            { New-WpaPlan -ManifestPath manifest.yaml -PolicyPath policy.yaml -InventoryPath inventory.json -OutputPath plan.json -WhatIf } |
+                Should -Throw '*MANAGER_FINGERPRINT_UNAVAILABLE: scoop*'
         }
 
         It 'rejects a blocked-only manifest when its selected manager record is missing' {
@@ -242,12 +255,12 @@ Describe 'WinPkgAgent planning' {
                 Should -Throw '*MANAGER_FINGERPRINT_UNAVAILABLE: scoop*'
         }
 
-        It 'rejects missing extra duplicate and reordered selected-manager scope' -ForEach @(
-            @{ Case='missing'; Scope=@('winget') }
-            @{ Case='extra'; Scope=@('winget','scoop','winget') }
-            @{ Case='duplicate'; Scope=@('winget','winget') }
-            @{ Case='reordered'; Scope=@('scoop','winget') }
+        It 'rejects missing extra and duplicate selected-manager scope' -ForEach @(
+            @{ Case='missing'; PolicyManagers=@('winget','scoop'); Scope=@('winget') }
+            @{ Case='extra'; PolicyManagers=@('scoop'); Scope=@('scoop','winget') }
+            @{ Case='duplicate'; PolicyManagers=@('winget','scoop'); Scope=@('scoop','scoop','winget') }
         ) {
+            $policy.allowedManagers=$PolicyManagers
             $manifest=[pscustomobject]@{packages=@([pscustomobject]@{name='vscode';manager='winget';id='Microsoft.VisualStudioCode';state='present';version='latest';source='winget'})}
             $wingetFingerprint=[pscustomobject]@{manager='winget';signatureStatus='valid';aclAssessment='trusted'}
             $scoopFingerprint=[pscustomobject]@{manager='scoop';signatureStatus='not-applicable';aclAssessment='trusted'}

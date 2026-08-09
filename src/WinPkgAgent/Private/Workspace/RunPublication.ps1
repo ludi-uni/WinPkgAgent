@@ -226,6 +226,162 @@ namespace WinPkgAgent.Native
 '@
 }
 
+if (-not ('WinPkgAgent.Native.OwnedPublicationMarker' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using Microsoft.Win32.SafeHandles;
+
+namespace WinPkgAgent.Native
+{
+    public sealed class OwnedPublicationMarker : IDisposable
+    {
+        private const uint GenericRead = 0x80000000;
+        private const uint GenericWrite = 0x40000000;
+        private const uint DeleteAccess = 0x00010000;
+        private const uint FileShareRead = 0x00000001;
+        private const uint CreateNew = 1;
+        private const uint FileAttributeNormal = 0x00000080;
+        private const uint FileFlagWriteThrough = 0x80000000;
+        private const int FileRenameInfo = 3;
+        private FileStream stream;
+
+        private OwnedPublicationMarker(FileStream stream)
+        {
+            this.stream = stream;
+        }
+
+        public bool IsOpen
+        {
+            get { return stream != null && stream.SafeFileHandle != null && !stream.SafeFileHandle.IsInvalid && !stream.SafeFileHandle.IsClosed; }
+        }
+
+        public static OwnedPublicationMarker CreateAtomically(string path, string content)
+        {
+            FileStream markerStream = null;
+            SafeFileHandle markerHandle = null;
+            try
+            {
+                markerHandle = CreateFile(
+                    Path.GetFullPath(path),
+                    GenericRead | GenericWrite | DeleteAccess,
+                    FileShareRead,
+                    IntPtr.Zero,
+                    CreateNew,
+                    FileAttributeNormal | FileFlagWriteThrough,
+                    IntPtr.Zero);
+                if (markerHandle == null || markerHandle.IsInvalid)
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    if (markerHandle != null) { markerHandle.Dispose(); }
+                    markerHandle = null;
+                    throw new Win32Exception(error);
+                }
+                markerStream = new FileStream(markerHandle, FileAccess.ReadWrite, 4096, false);
+                markerHandle = null;
+                byte[] bytes = System.Text.Encoding.UTF8.GetBytes(content);
+                markerStream.Write(bytes, 0, bytes.Length);
+                markerStream.Flush(true);
+                return new OwnedPublicationMarker(markerStream);
+            }
+            catch
+            {
+                if (markerStream != null) { markerStream.Dispose(); }
+                if (markerHandle != null) { markerHandle.Dispose(); }
+                throw;
+            }
+        }
+
+        public void Rename(string destinationPath)
+        {
+            if (!IsOpen)
+            {
+                throw new InvalidOperationException("Publication marker ownership handle is closed.");
+            }
+
+            byte[] destinationBytes = System.Text.Encoding.Unicode.GetBytes(Path.GetFullPath(destinationPath));
+            int rootOffset = IntPtr.Size == 8 ? 8 : 4;
+            int lengthOffset = rootOffset + IntPtr.Size;
+            int nameOffset = lengthOffset + sizeof(uint);
+            int bufferLength = nameOffset + destinationBytes.Length + sizeof(char);
+            IntPtr buffer = Marshal.AllocHGlobal(bufferLength);
+            try
+            {
+                for (int offset = 0; offset < nameOffset; offset += sizeof(int))
+                {
+                    Marshal.WriteInt32(buffer, offset, 0);
+                }
+                Marshal.WriteIntPtr(buffer, rootOffset, IntPtr.Zero);
+                Marshal.WriteInt32(buffer, lengthOffset, destinationBytes.Length);
+                Marshal.Copy(destinationBytes, 0, IntPtr.Add(buffer, nameOffset), destinationBytes.Length);
+                Marshal.WriteInt16(buffer, nameOffset + destinationBytes.Length, 0);
+                if (!SetFileInformationByHandle(stream.SafeFileHandle, FileRenameInfo, buffer, (uint)bufferLength))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        public string GetSha256()
+        {
+            if (!IsOpen)
+            {
+                throw new InvalidOperationException("Publication marker ownership handle is closed.");
+            }
+            long position = stream.Position;
+            try
+            {
+                stream.Position = 0;
+                using (SHA256 sha256 = SHA256.Create())
+                {
+                    byte[] hash = sha256.ComputeHash(stream);
+                    return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+                }
+            }
+            finally
+            {
+                stream.Position = position;
+            }
+        }
+
+        public void Dispose()
+        {
+            if (stream != null)
+            {
+                stream.Dispose();
+                stream = null;
+            }
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateFileW")]
+        private static extern SafeFileHandle CreateFile(
+            string fileName,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetFileInformationByHandle(
+            SafeFileHandle fileHandle,
+            int fileInformationClass,
+            IntPtr fileInformation,
+            uint bufferSize);
+    }
+}
+'@
+}
+
 function New-WpaOwnedDirectoryHandleAtomically {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
@@ -403,6 +559,10 @@ function New-WpaRunStagingOwnership {
             Token = $token
             Stream = $stream
             DirectoryHandle = $directoryHandle
+            PublicationMarker = $null
+            PublicationGuardPath = $null
+            PublicationPendingPath = $null
+            PublicationMarkerHash = $null
             OwnedFiles = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
             OwnedDirectories = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
             ExpectedFileHashes = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -464,6 +624,59 @@ function Write-WpaOwnedStagingJson {
     Write-WpaOwnedStagingText -Ownership $Ownership -Path $Path -Text (($Data | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
 }
 
+function New-WpaOwnedPublicationMarker {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$Ownership,[Parameter(Mandatory)][string]$RunId)
+
+    Assert-WpaOwnedRunStagingTrust -Ownership $Ownership | Out-Null
+    if ($RunId -cnotmatch '^[0-9]{8}-[0-9]{6}-[a-f0-9]{8}$') { throw 'RUN_ID_INVALID' }
+    $guardPath = [IO.Path]::GetFullPath((Join-Path $Ownership.RunsPath ".wpa-publication-guard-$RunId"))
+    if (-not [string]::Equals([IO.Path]::GetDirectoryName($guardPath), $Ownership.RunsPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Publication marker path is not trusted.'
+    }
+    if (Test-Path -LiteralPath $guardPath -ErrorAction Stop) { throw 'Publication marker already exists.' }
+
+    $content = [string]$Ownership.Token
+    $bytes = [Text.Encoding]::UTF8.GetBytes($content)
+    $marker = $null
+    try {
+        $marker = [WinPkgAgent.Native.OwnedPublicationMarker]::CreateAtomically($guardPath, $content)
+        $item = Get-Item -LiteralPath $guardPath -Force -ErrorAction Stop
+        if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Publication marker is not trusted.'
+        }
+        $expectedHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+        $Ownership.PublicationMarker = $marker
+        $Ownership.PublicationGuardPath = $guardPath
+        $Ownership.PublicationMarkerHash = $expectedHash
+        return $marker
+    } catch {
+        if ($null -ne $marker) { $marker.Dispose() }
+        throw
+    }
+}
+
+function Move-WpaOwnedPublicationMarkerToPending {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$Ownership,[Parameter(Mandatory)][string]$FinalPath)
+
+    if ($null -eq $Ownership.PublicationMarker -or -not $Ownership.PublicationMarker.IsOpen) {
+        throw 'Owned publication marker identity is unavailable.'
+    }
+    $finalFull = [IO.Path]::GetFullPath($FinalPath)
+    if (-not [string]::Equals([IO.Path]::GetDirectoryName($finalFull), $Ownership.RunsPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Published run path is not trusted.'
+    }
+    $pendingPath = [IO.Path]::GetFullPath((Join-Path $finalFull '.wpa-publication-pending'))
+    if ((Test-Path -LiteralPath $pendingPath -ErrorAction Stop) -or $Ownership.ExpectedFileHashes.ContainsKey('.wpa-publication-pending')) {
+        throw 'Publication marker already exists.'
+    }
+    $Ownership.PublicationMarker.Rename($pendingPath)
+    $Ownership.PublicationPendingPath = $pendingPath
+    $Ownership.ExpectedFileHashes.Add('.wpa-publication-pending', [string]$Ownership.PublicationMarkerHash)
+    $Ownership.OwnedFiles.Add($pendingPath) | Out-Null
+}
+
 function Assert-WpaOwnedStagingContents {
     [CmdletBinding()]
     param([Parameter(Mandatory)][object]$Ownership,[string]$BasePath=$Ownership.StagingPath,[switch]$OwnershipReleased)
@@ -506,7 +719,13 @@ function Assert-WpaOwnedStagingContents {
             }
         } else {
             if (-not $Ownership.ExpectedFileHashes.ContainsKey($relativePath)) { throw 'Unowned staging content detected.' }
-            $entryHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($entry.FullName))).ToLowerInvariant()
+            if ([string]::Equals($relativePath, '.wpa-publication-pending', [StringComparison]::OrdinalIgnoreCase) -and
+                $Ownership.PSObject.Properties.Name -contains 'PublicationMarker' -and $null -ne $Ownership.PublicationMarker -and
+                $Ownership.PublicationMarker.IsOpen) {
+                $entryHash = $Ownership.PublicationMarker.GetSha256()
+            } else {
+                $entryHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($entry.FullName))).ToLowerInvariant()
+            }
             if (-not [string]::Equals($entryHash, $Ownership.ExpectedFileHashes[$relativePath], [StringComparison]::Ordinal)) {
                 throw 'Owned staging content changed unexpectedly.'
             }
@@ -526,6 +745,10 @@ function Close-WpaRunStagingOwnershipHandles {
     if ($null -ne $Ownership.Stream) {
         try { $Ownership.Stream.Dispose() } catch { }
         $Ownership.Stream = $null
+    }
+    if ($Ownership.PSObject.Properties.Name -contains 'PublicationMarker' -and $null -ne $Ownership.PublicationMarker) {
+        try { $Ownership.PublicationMarker.Dispose() } catch { }
+        $Ownership.PublicationMarker = $null
     }
     if ($Ownership.PSObject.Properties.Name -contains 'DirectoryHandle' -and $null -ne $Ownership.DirectoryHandle) {
         try { $Ownership.DirectoryHandle.Dispose() } catch { }
@@ -559,6 +782,14 @@ function Move-WpaOwnedRunToStagingEvidence {
     if ($null -eq $Ownership.DirectoryHandle -or -not $Ownership.DirectoryHandle.IsOpen) {
         throw 'Owned staging directory identity is unavailable.'
     }
+    $pendingPath = if ($Ownership.PSObject.Properties.Name -contains 'PublicationPendingPath') { [string]$Ownership.PublicationPendingPath } else { '' }
+    $guardPath = if ($Ownership.PSObject.Properties.Name -contains 'PublicationGuardPath') { [string]$Ownership.PublicationGuardPath } else { '' }
+    $markerMovedToGuard = $false
+    if (-not [string]::IsNullOrWhiteSpace($pendingPath) -and -not [string]::IsNullOrWhiteSpace($guardPath) -and
+        $null -ne $Ownership.PublicationMarker -and $Ownership.PublicationMarker.IsOpen) {
+        $Ownership.PublicationMarker.Rename($guardPath)
+        $markerMovedToGuard = $true
+    }
     for ($attempt = 0; $attempt -lt 3; $attempt++) {
         $leaf = ".staging-evidence-$RunId-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
         $evidencePath = [IO.Path]::GetFullPath((Join-Path $Ownership.RunsPath $leaf))
@@ -567,10 +798,48 @@ function Move-WpaOwnedRunToStagingEvidence {
         }
         try {
             $Ownership.DirectoryHandle.Rename($evidencePath)
+            if ($markerMovedToGuard) {
+                $evidencePendingPath = [IO.Path]::Combine($evidencePath, '.wpa-publication-pending')
+                $Ownership.PublicationMarker.Rename($evidencePendingPath)
+                $Ownership.PublicationPendingPath = $evidencePendingPath
+            }
             return $evidencePath
         } catch {
-            if ($attempt -eq 2) { throw 'Owned staging evidence could not be preserved.' }
+            if ($attempt -eq 2) {
+                if ($markerMovedToGuard) {
+                    try {
+                        $Ownership.PublicationMarker.Rename($pendingPath)
+                        $Ownership.PublicationPendingPath = $pendingPath
+                    } catch { }
+                }
+                throw 'Owned staging evidence could not be preserved.'
+            }
         }
+    }
+}
+
+function Move-WpaOwnedPublicationMarkerToCompleted {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$Ownership,[Parameter(Mandatory)][string]$FinalPath)
+
+    if ($Ownership.PSObject.Properties.Name -notcontains 'PublicationMarker' -or
+        $null -eq $Ownership.PublicationMarker -or -not $Ownership.PublicationMarker.IsOpen) {
+        throw 'Owned publication marker identity is unavailable.'
+    }
+    $finalFull = [IO.Path]::GetFullPath($FinalPath)
+    if (-not [string]::Equals([IO.Path]::GetDirectoryName($finalFull), $Ownership.RunsPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Published run path is not trusted.'
+    }
+    $completePath = [IO.Path]::GetFullPath((Join-Path $finalFull '.wpa-publication-complete'))
+    if (-not [string]::Equals([IO.Path]::GetDirectoryName($completePath), $finalFull, [StringComparison]::OrdinalIgnoreCase) -or
+        (Test-Path -LiteralPath $completePath -ErrorAction Stop)) {
+        throw 'Completed publication marker path is not trusted.'
+    }
+    $Ownership.PublicationMarker.Rename($completePath)
+    if ((Test-Path -LiteralPath $Ownership.PublicationPendingPath -ErrorAction Stop) -or
+        (Test-Path -LiteralPath $Ownership.PublicationGuardPath -ErrorAction Stop) -or
+        -not (Test-Path -LiteralPath $completePath -ErrorAction Stop)) {
+        throw 'Publication marker completion could not be verified.'
     }
 }
 
@@ -625,6 +894,7 @@ function Publish-WpaPreparedRun {
     try {
         $ownership = New-WpaRunStagingOwnership -WorkspacePath $workspace -RunsPath $runsPath -StagingPath $stagingPath -ExpectedLeaf $stagingLeaf
         $stagingCreated = $true
+        New-WpaOwnedPublicationMarker -Ownership $ownership -RunId $runId | Out-Null
         Write-WpaOwnedStagingText -Ownership $ownership -Path (Get-WpaRunArtifactPath $stagingPath manifest) -Text $Preparation.manifestText
         Write-WpaOwnedStagingText -Ownership $ownership -Path (Get-WpaRunArtifactPath $stagingPath policy) -Text $Preparation.policyText
         Write-WpaOwnedStagingJson -Ownership $ownership -Path (Get-WpaRunArtifactPath $stagingPath inventory) -Data $Preparation.inventory
@@ -647,7 +917,7 @@ function Publish-WpaPreparedRun {
         }
 
         Assert-WpaOwnedRunStagingTrust -Ownership $ownership | Out-Null
-        Read-WpaRun -RunPath $stagingPath | Out-Null
+        Read-WpaRunMetadata -RunPath $stagingPath | Out-Null
         $stagedPlan = Read-WpaJsonFile (Get-WpaRunArtifactPath $stagingPath plan)
         Test-WpaDataSchema -Data $stagedPlan -SchemaName plan | Out-Null
         Invoke-WpaStagedPlanActionSetValidation -Actions @($stagedPlan.actions)
@@ -657,12 +927,14 @@ function Publish-WpaPreparedRun {
         $ownership.Stream = $null
         Assert-WpaStagingOwnershipMarkerReleased -Ownership $ownership | Out-Null
         Move-WpaOwnedRunStagingDirectory -Ownership $ownership -FinalPath $finalPath
+        Move-WpaOwnedPublicationMarkerToPending -Ownership $ownership -FinalPath $finalPath
         try {
             Assert-WpaOwnedStagingContents -Ownership $ownership -BasePath $finalPath -OwnershipReleased | Out-Null
         } catch {
             Move-WpaOwnedRunToStagingEvidence -Ownership $ownership -RunId $runId | Out-Null
             throw 'PREVIEW_STAGING_PRESERVED'
         }
+        Move-WpaOwnedPublicationMarkerToCompleted -Ownership $ownership -FinalPath $finalPath
         return $finalPath
     } catch {
         if ($stagingCreated) {

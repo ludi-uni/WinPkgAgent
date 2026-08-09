@@ -26,6 +26,34 @@ Describe 'WinPkgAgent run workspace boundaries' {
             { Get-WpaRunArtifactPath $run plan } | Should -Throw '*reparse*'
         }
 
+        It 'accepts a legacy run with no publication marker' {
+            $run=Join-Path $TestDrive 'legacy-run';[IO.Directory]::CreateDirectory($run)|Out-Null
+            $metadata=[pscustomobject]@{schemaVersion=1;runId='20260805-010203-aabbccdd'}
+            Mock Read-WpaJsonFile { $metadata }
+            Mock Test-WpaDataSchema { $true }
+
+            (Read-WpaRun $run).runId | Should -BeExactly '20260805-010203-aabbccdd'
+        }
+
+        It 'rejects a run while its publication marker is pending' {
+            $run=Join-Path $TestDrive 'pending-run';[IO.Directory]::CreateDirectory($run)|Out-Null
+            [IO.File]::WriteAllText((Join-Path $run '.wpa-publication-pending'),'pending')
+            Mock Read-WpaJsonFile { throw 'run metadata must not be read' }
+
+            { Read-WpaRun $run } | Should -Throw 'RUN_PUBLICATION_PENDING'
+            Should -Invoke Read-WpaJsonFile -Times 0 -Exactly
+        }
+
+        It 'rejects a run while its sibling publication guard is pending' {
+            $run=Join-Path $TestDrive 'runs/20260809-010203-aabbccdd';[IO.Directory]::CreateDirectory($run)|Out-Null
+            $guard=Join-Path (Split-Path $run -Parent) '.wpa-publication-guard-20260809-010203-aabbccdd'
+            [IO.File]::WriteAllText($guard,'pending')
+            Mock Read-WpaJsonFile { throw 'run metadata must not be read' }
+
+            { Read-WpaRun $run } | Should -Throw 'RUN_PUBLICATION_PENDING'
+            Should -Invoke Read-WpaJsonFile -Times 0 -Exactly
+        }
+
         It 'returns validated run metadata through the workspace reader' {
             $expected = [pscustomobject]@{runId='20260809-010203-aabbccdd';currentStage='planned'}
             Mock Read-WpaRun { $expected }
@@ -476,6 +504,9 @@ Describe 'WinPkgAgent run workspace boundaries' {
                     Test-Path (Join-Path $final $artifact) | Should -BeFalse
                 }
                 Test-Path (Join-Path $final '.wpa-staging-owner') | Should -BeFalse
+                Test-Path (Join-Path $final '.wpa-publication-pending') | Should -BeFalse
+                Test-Path (Join-Path $final '.wpa-publication-complete') | Should -BeTrue
+                Test-Path (Join-Path (Split-Path $final -Parent) ".wpa-publication-guard-$($run.runId)") | Should -BeFalse
                 Get-ChildItem (Join-Path $workspace 'runs') -Directory -Filter '.staging-*' | Should -BeNullOrEmpty
             }
 
@@ -491,6 +522,23 @@ Describe 'WinPkgAgent run workspace boundaries' {
                     @(Get-ChildItem -LiteralPath $staging -Force) | Should -BeNullOrEmpty
                 } finally {
                     if ($null -ne $handle) { $handle.Dispose() }
+                }
+            }
+
+            It 'keeps the publication guard unavailable for replacement while its ownership handle is open' {
+                $workspace = Join-Path $TestDrive 'publication-guard-sharing'
+                $runs = Join-Path $workspace 'runs'
+                $staging = Join-Path $runs ".staging-$($script:preparedRun.runId)"
+                $ownership = New-WpaRunStagingOwnership -WorkspacePath $workspace -RunsPath $runs -StagingPath $staging -ExpectedLeaf ".staging-$($script:preparedRun.runId)"
+                try {
+                    New-WpaOwnedPublicationMarker -Ownership $ownership -RunId $script:preparedRun.runId | Out-Null
+
+                    { [IO.File]::WriteAllText($ownership.PublicationGuardPath, 'replacement') } | Should -Throw
+                    { [IO.File]::Delete($ownership.PublicationGuardPath) } | Should -Throw
+                    Test-Path -LiteralPath $ownership.PublicationGuardPath | Should -BeTrue
+                    $ownership.PublicationMarker.GetSha256() | Should -BeExactly $ownership.PublicationMarkerHash
+                } finally {
+                    Close-WpaRunStagingOwnershipHandles -Ownership $ownership
                 }
             }
 
@@ -739,6 +787,78 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 $evidence = @(Get-ChildItem -LiteralPath $runs -Directory -Filter ".staging-evidence-$($script:preparedRun.runId)-*")
                 $evidence.Count | Should -Be 1
                 [IO.File]::ReadAllText((Join-Path $evidence[0].FullName 'manifest.yaml')) | Should -BeExactly $replacement
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
+            It 'exhausts three collision-safe evidence renames without deleting evidence' {
+                $runs = Join-Path $TestDrive 'evidence-collision-exhaustion/runs'
+                [IO.Directory]::CreateDirectory($runs) | Out-Null
+                $handle = [pscustomobject]@{IsOpen=$true;Attempts=0}
+                $handle | Add-Member -MemberType ScriptMethod -Name Rename -Value {
+                    param($DestinationPath)
+                    $this.Attempts++
+                    throw [IO.IOException]::new('destination collision')
+                }
+                $ownership = [pscustomobject]@{DirectoryHandle=$handle;RunsPath=[IO.Path]::GetFullPath($runs)}
+                Mock Remove-Item {}
+
+                { Move-WpaOwnedRunToStagingEvidence -Ownership $ownership -RunId $script:preparedRun.runId } |
+                    Should -Throw 'Owned staging evidence could not be preserved.'
+
+                $handle.Attempts | Should -Be 3
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
+            It 'leaves an exhausted post-rename run pending and rejects read approval and invoke consumers' {
+                $workspace = Join-Path $TestDrive 'workspace-evidence-exhaustion'
+                $runs = Join-Path $workspace 'runs'
+                $final = Join-Path $runs $script:preparedRun.runId
+                $replacement = "# replaced after rename`nschemaVersion: 1`nprofiles:`n  - base`npackages: []`n"
+                Mock Move-WpaOwnedRunStagingDirectory {
+                    param($Ownership, $FinalPath)
+                    $Ownership.DirectoryHandle.Rename([IO.Path]::GetFullPath($FinalPath))
+                    $manifestPath = Join-Path $FinalPath 'manifest.yaml'
+                    [IO.File]::Delete($manifestPath)
+                    [IO.File]::WriteAllText($manifestPath, $replacement, [Text.UTF8Encoding]::new($false))
+                }
+                Mock Move-WpaOwnedRunToStagingEvidence { throw 'Owned staging evidence could not be preserved.' }
+                Mock Approve-WpaPlan { throw 'approval must not run' }
+                Mock Invoke-WpaPlan { throw 'invoke must not run' }
+                Mock Remove-Item {}
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw 'PREVIEW_STAGING_PRESERVED'
+
+                Test-Path $final | Should -BeTrue
+                Test-Path (Join-Path $final '.wpa-publication-pending') | Should -BeTrue
+                [IO.File]::ReadAllText((Join-Path $final 'manifest.yaml')) | Should -BeExactly $replacement
+                { Read-WpaRun $final } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                { Approve-WpaRun -RunPath $final -WhatIf } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                { Invoke-WpaRun -RunPath $final -WhatIf } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                Should -Invoke Approve-WpaPlan -Times 0 -Exactly
+                Should -Invoke Invoke-WpaPlan -Times 0 -Exactly
+                Should -Invoke Remove-Item -Times 0 -Exactly
+            }
+
+            It 'leaves a completion-marker rename failure pending and rejects read approval and invoke consumers' {
+                $workspace = Join-Path $TestDrive 'workspace-completion-marker-failure'
+                $final = Join-Path $workspace "runs/$($script:preparedRun.runId)"
+                Mock Move-WpaOwnedPublicationMarkerToCompleted { throw 'simulated completion marker failure' }
+                Mock Approve-WpaPlan { throw 'approval must not run' }
+                Mock Invoke-WpaPlan { throw 'invoke must not run' }
+                Mock Remove-Item {}
+
+                { Publish-WpaPreparedRun -Preparation $script:preparation -WorkspacePath $workspace } |
+                    Should -Throw 'PREVIEW_STAGING_PRESERVED'
+
+                Test-Path $final | Should -BeTrue
+                Test-Path (Join-Path $final '.wpa-publication-pending') | Should -BeTrue
+                Test-Path (Join-Path $final '.wpa-publication-complete') | Should -BeFalse
+                { Read-WpaRun $final } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                { Approve-WpaRun -RunPath $final -WhatIf } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                { Invoke-WpaRun -RunPath $final -WhatIf } | Should -Throw 'RUN_PUBLICATION_PENDING'
+                Should -Invoke Approve-WpaPlan -Times 0 -Exactly
+                Should -Invoke Invoke-WpaPlan -Times 0 -Exactly
                 Should -Invoke Remove-Item -Times 0 -Exactly
             }
 

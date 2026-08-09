@@ -8,10 +8,11 @@ function New-WpaPlanObject {
     )
     $policyHash=Get-WpaObjectHash $Policy
     $inventoryPolicyHash=[string](Get-WpaPropertyValue $Inventory 'policyHash')
-    $managerScope=@(Get-WpaPropertyValue $Inventory 'managerScope' @() | ForEach-Object {[string]$_})
-    $selectedManagers=@($Policy.allowedManagers | ForEach-Object {[string]$_})
+    $rawManagerScope=@(Get-WpaPropertyValue $Inventory 'managerScope' @() | ForEach-Object {([string]$_).ToLowerInvariant()})
+    $managerScope=@($rawManagerScope | Sort-Object -Unique)
+    $selectedManagers=@($Policy.allowedManagers | ForEach-Object {([string]$_).ToLowerInvariant()} | Sort-Object -Unique)
     $inventoryStatus=[string](Get-WpaPropertyValue $Inventory 'status' '')
-    if($inventoryPolicyHash -ne $policyHash -or $inventoryStatus -cne 'success' -or $managerScope.Count -ne $selectedManagers.Count){throw 'INVENTORY_SCOPE_MISMATCH'}
+    if($inventoryPolicyHash -ne $policyHash -or $inventoryStatus -cne 'success' -or $rawManagerScope.Count -ne $managerScope.Count -or $managerScope.Count -ne $selectedManagers.Count){throw 'INVENTORY_SCOPE_MISMATCH'}
     for($index=0;$index -lt $selectedManagers.Count;$index++){
         if(-not [string]::Equals($managerScope[$index],$selectedManagers[$index],[StringComparison]::Ordinal)){throw 'INVENTORY_SCOPE_MISMATCH'}
     }
@@ -19,7 +20,10 @@ function New-WpaPlanObject {
     foreach($manager in $selectedManagers){
         $inventoryManager=@($inventoryManagers | Where-Object {[string]::Equals([string](Get-WpaPropertyValue $_ 'manager'),$manager,[StringComparison]::Ordinal)})
         if($inventoryManager.Count -ne 1 -or [string](Get-WpaPropertyValue $inventoryManager[0] 'status' '') -cne 'success'){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $manager"}
-        Assert-WpaManagerFingerprintEvidence -Manager $manager -Fingerprint (Get-WpaPropertyValue $inventoryManager[0] 'fingerprint') | Out-Null
+        $fingerprint=Get-WpaPropertyValue $inventoryManager[0] 'fingerprint'
+        $fingerprintManager=[string](Get-WpaPropertyValue $fingerprint 'manager' '')
+        if(-not [string]::Equals($fingerprintManager,$manager,[StringComparison]::Ordinal)){throw "MANAGER_FINGERPRINT_UNAVAILABLE: $manager"}
+        Assert-WpaManagerFingerprintEvidence -Manager $manager -Fingerprint $fingerprint | Out-Null
     }
     if($inventoryManagers.Count -ne $selectedManagers.Count){throw 'INVENTORY_SCOPE_MISMATCH'}
     $evaluation=Get-WpaPlanEvaluation -Manifest $Manifest -Policy $Policy -Inventory $Inventory

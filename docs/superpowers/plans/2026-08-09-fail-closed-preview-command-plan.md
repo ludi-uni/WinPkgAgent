@@ -448,6 +448,8 @@ git commit -m "feat: prepare trusted run snapshots"
 
 > Approved design amendment (2026-08-09): path-based cleanup cannot prove object identity across a same-user replacement race. After staging creation, failure handling preserves staging and throws `PREVIEW_STAGING_PRESERVED`. Successful publication may use narrowly scoped private Windows handle interop to rename the owned staging-directory object; unknown or replacement objects are never removed or published.
 
+> Human-approved completion amendment (2026-08-09): create an exclusive invocation-owned publication guard beside staging before the directory rename. After the exact owned directory reaches its canonical run path, rename that same guard handle to `.wpa-publication-pending`, validate the final owned contents, and rename the exact marker handle to `.wpa-publication-complete`. Readers reject either the sibling guard or the in-run pending marker before reading metadata. On evidence-quarantine failure, one of those pending names remains and no evidence is deleted.
+
 **Files:**
 - Create: `src/WinPkgAgent/Private/Workspace/RunPublication.ps1`
 - Modify: `src/WinPkgAgent/Private/Workspace.ps1:1-42`
