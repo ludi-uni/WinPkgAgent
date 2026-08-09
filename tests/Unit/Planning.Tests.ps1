@@ -48,11 +48,11 @@ Describe 'WinPkgAgent planning' {
             $plan.inventoryHash | Should -Match '^[a-f0-9]{64}$'
             $plan.contentHash | Should -Match '^[a-f0-9]{64}$'
             $plan.planHash | Should -Match '^[a-f0-9]{64}$'
-            Assert-MockCalled Read-WpaManifestResolved -Times 0
-            Assert-MockCalled Read-WpaPolicyFile -Times 0
-            Assert-MockCalled Read-WpaJsonFile -Times 0
-            Assert-MockCalled Write-WpaAtomicJson -Times 0
-            Assert-MockCalled Write-WpaAtomicText -Times 0
+            Assert-MockCalled Read-WpaManifestResolved -Times 0 -Exactly
+            Assert-MockCalled Read-WpaPolicyFile -Times 0 -Exactly
+            Assert-MockCalled Read-WpaJsonFile -Times 0 -Exactly
+            Assert-MockCalled Write-WpaAtomicJson -Times 0 -Exactly
+            Assert-MockCalled Write-WpaAtomicText -Times 0 -Exactly
         }
 
         It 'plans an install with a stable reason code' {
