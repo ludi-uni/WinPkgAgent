@@ -1,7 +1,7 @@
 # Publication directory identity design
 
 **Date:** 2026-08-09
-**Status:** Human-approved direction; written-spec review pending
+**Status:** Human-approved on 2026-08-09; implementation planning complete
 **Scope:** Close the post-canonical directory/junction replacement blocker reported against `bf47e8b`, without changing public commands, schemas, approval behavior, or package-manager behavior.
 
 ## Problem
