@@ -58,12 +58,14 @@ runPath: <run path>
 actionCount: <number>
 blockedCount: <number>
 warningCount: <number>
+blockedReasons: @({ manager, id, reasonCode, reason })
 nextCommand: pwsh ./scripts/winpkg-agent.ps1 approve-run -RunPath '<run path>'
 ```
 
 `blocked`はplan自体の生成に成功したが、1件以上の`blockedOperations`が含まれることを示す。ブロックされていないactionがある場合、人間はplanを確認したうえで既存の承認フローへ進める。`preview`自身は承認を開始しない。
 
 `runPath`と`nextCommand`はコンソール出力にだけ含め、run artifactへ新しいraw host/user値として永続化しない。
+`-WhatIf`ではrunが存在しないため、`runId`、`blockedReasons`、`nextCommand`をnullまたは空配列にする。
 
 ### 終了コード
 
