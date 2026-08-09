@@ -15,7 +15,7 @@ Example Tool         Example.Tool                1.2.3               winget
                 [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = $list; StdErr = ''; DurationMs = 1 }
             }
 
-            $result = Get-WpaWingetUnmanagedObservations -KnownIds @('7zip.7zip')
+            $result = Get-WpaWingetUnmanagedObservation -KnownIds @('7zip.7zip')
 
             $result.status | Should -Be 'success'
             @($result.observations) | Should -HaveCount 2
@@ -32,7 +32,7 @@ Example Tool         Example.Tool                1.2.3               winget
             Mock Resolve-WpaManagerExecutable { 'C:\fixtures\winget.exe' }
             Mock Invoke-WpaProcess { [pscustomobject]@{ ExitCode = 0; TimedOut = $false; StdOut = 'unknown output'; StdErr = ''; DurationMs = 1 } }
 
-            $result = Get-WpaWingetUnmanagedObservations -KnownIds @()
+            $result = Get-WpaWingetUnmanagedObservation -KnownIds @()
 
             $result.status | Should -Be 'failed'
             @($result.observations) | Should -HaveCount 0
@@ -55,7 +55,7 @@ Example Tool         Example.Tool                1.2.3               winget
                 packages = @(@{ manager='winget'; id='7zip.7zip'; displayName='7-Zip'; installedVersion='25.01'; availableVersion=$null; source='winget'; scope=$null; metadata=@{} })
                 warnings = @()
             } | ConvertTo-Json -Depth 20))
-            Mock Get-WpaWingetUnmanagedObservations {
+            Mock Get-WpaWingetUnmanagedObservation {
                 [pscustomobject]@{
                     status = 'success'
                     warning = $null

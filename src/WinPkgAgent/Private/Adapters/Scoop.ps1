@@ -1,11 +1,11 @@
-function Test-WpaScoopAvailable { param([string]$Executable='scoop'); $null -ne (Resolve-WpaManagerExecutable -Manager scoop) }
+function Test-WpaScoopAvailable { $null -ne (Resolve-WpaManagerExecutable -Manager scoop) }
 function ConvertFrom-WpaScoopExport {
     param([Parameter(Mandatory)][string]$Json)
     try { $data = $Json | ConvertFrom-Json -ErrorAction Stop } catch { return $null }
     $appsProperty = $data.PSObject.Properties['apps']
     $apps = if($null -ne $appsProperty){ $appsProperty.Value } else { $null }
     $items = if($data -is [System.Collections.IEnumerable] -and $data -isnot [string]){@($data)} elseif($null -ne $appsProperty){@($apps)} else {@($data)}
-    if($null -ne $appsProperty -and @($apps).Count -eq 0){ Write-Output -NoEnumerate ([object[]]@()); return }
+    if($null -ne $appsProperty -and @($apps).Count -eq 0){ Write-Output -InputObject ([object[]]@()) -NoEnumerate; return }
     $result = foreach($p in $items) {
         $id = Get-WpaPropertyValue $p 'name'; if([string]::IsNullOrWhiteSpace($id)){ $id=Get-WpaPropertyValue $p 'Name' }
         if([string]::IsNullOrWhiteSpace($id)){ return $null }
@@ -120,7 +120,17 @@ function Get-WpaScoopInventory {
     if($null -eq $packages){$warnings+='scoop export output unavailable or malformed'}
     if($null -eq $managerVersion){$warnings+='scoop version output unavailable or unrecognized'}
     if($null -eq $updates){$warnings+='scoop status output unavailable or unrecognized'}
-    [pscustomobject]@{manager='scoop';version=$managerVersion;status=$status;timedOut=($r.TimedOut -or $u.TimedOut -or $v.TimedOut);Packages=@($packages | Where-Object {$null -ne $_} | ForEach-Object {[pscustomobject]@{manager='scoop';id=$_.Id;displayName=$_.Id;installedVersion=$_.Version;availableVersion=(Get-WpaPropertyValue $_ 'AvailableVersion');source=$_.Source;scope=$null;metadata=@{detectedBy='scoop-export'}}});warning=if($warnings.Count -gt 0){$warnings -join '; '}else{$null};Available=(Test-WpaScoopAvailable $Executable);Success=($null -ne $packages);Raw=$r}
+    [pscustomobject]@{manager='scoop';version=$managerVersion;status=$status;timedOut=($r.TimedOut -or $u.TimedOut -or $v.TimedOut);Packages=@($packages | Where-Object {$null -ne $_} | ForEach-Object {[pscustomobject]@{manager='scoop';id=$_.Id;displayName=$_.Id;installedVersion=$_.Version;availableVersion=(Get-WpaPropertyValue $_ 'AvailableVersion');source=$_.Source;scope=$null;metadata=@{detectedBy='scoop-export'}}});warning=if($warnings.Count -gt 0){$warnings -join '; '}else{$null};Available=(Test-WpaScoopAvailable);Success=($null -ne $packages);Raw=$r}
 }
 function Install-WpaScoopPackage { [CmdletBinding(SupportsShouldProcess)]param([string]$Id,[string]$Version,[string]$Source,[int]$TimeoutSeconds=30); if($Id -notmatch '^[A-Za-z0-9_.-]+$'){throw 'invalid id'}; $Executable=Resolve-WpaManagerExecutable -Manager scoop; if(-not $Executable){throw 'scoop executable unavailable'}; $spec=if($Source){"$Source/$Id"}else{$Id}; if($Version){$spec += "@$Version"};if($PSCmdlet.ShouldProcess("scoop/$Id",'install')){Invoke-WpaProcess -FilePath $Executable -Arguments @('install',$spec,'--no-update-scoop') -TimeoutSeconds $TimeoutSeconds} }
-function Update-WpaScoopPackage { [CmdletBinding(SupportsShouldProcess)]param([string]$Id,[string]$Version,[string]$Source,[int]$TimeoutSeconds=30); $Executable=Resolve-WpaManagerExecutable -Manager scoop; if(-not $Executable){throw 'scoop executable unavailable'}; if($PSCmdlet.ShouldProcess("scoop/$Id",'upgrade')){Invoke-WpaProcess -FilePath $Executable -Arguments @('update',$Id) -TimeoutSeconds $TimeoutSeconds} }
+function Update-WpaScoopPackage {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Version', Justification='The common manager upgrade adapter contract includes Version; Scoop update does not accept it.')]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Source', Justification='The common manager upgrade adapter contract includes Source; Scoop update uses the installed bucket.')]
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$Id,[string]$Version,[string]$Source,[int]$TimeoutSeconds=30)
+    $Executable=Resolve-WpaManagerExecutable -Manager scoop
+    if(-not $Executable){throw 'scoop executable unavailable'}
+    if($PSCmdlet.ShouldProcess("scoop/$Id",'upgrade')){
+        Invoke-WpaProcess -FilePath $Executable -Arguments @('update',$Id) -TimeoutSeconds $TimeoutSeconds
+    }
+}

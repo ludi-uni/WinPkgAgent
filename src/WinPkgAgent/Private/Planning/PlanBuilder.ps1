@@ -1,4 +1,4 @@
-function New-WpaPlanObject {
+function ConvertTo-WpaPlanObject {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][object]$Manifest,

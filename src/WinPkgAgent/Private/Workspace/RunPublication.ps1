@@ -433,6 +433,7 @@ namespace WinPkgAgent.Native
 }
 
 function New-WpaOwnedDirectoryHandleAtomically {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification='This helper participates in the atomic publication transaction already gated by public New-WpaRun; an independent gate could split the transaction.')]
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
 
@@ -559,6 +560,7 @@ function Assert-WpaOwnedRunStagingTrust {
 }
 
 function New-WpaRunStagingOwnership {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification='This helper participates in the atomic publication transaction already gated by public New-WpaRun; an independent gate could split the transaction.')]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$WorkspacePath,
@@ -677,6 +679,7 @@ function Write-WpaOwnedStagingJson {
 }
 
 function New-WpaOwnedPublicationGuard {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification='This helper participates in the atomic publication transaction already gated by public New-WpaRun; an independent gate could split the transaction.')]
     [CmdletBinding()]
     param([Parameter(Mandatory)][object]$Ownership,[Parameter(Mandatory)][string]$RunId)
 
@@ -756,6 +759,7 @@ function Assert-WpaOwnedPublishedDirectoryTrust {
 }
 
 function New-WpaOwnedPublicationPendingMarker {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification='This helper participates in the atomic publication transaction already gated by public New-WpaRun; an independent gate could split the transaction.')]
     [CmdletBinding()]
     param([Parameter(Mandatory)][object]$Ownership,[Parameter(Mandatory)][string]$FinalPath)
 
@@ -794,7 +798,7 @@ function New-WpaOwnedPublicationPendingMarker {
     $Ownership.OwnedFiles.Add($pendingPath) | Out-Null
 }
 
-function Assert-WpaOwnedStagingContents {
+function Assert-WpaOwnedStagingContent {
     [CmdletBinding()]
     param([Parameter(Mandatory)][object]$Ownership,[string]$BasePath=$Ownership.StagingPath,[switch]$OwnershipReleased)
 
@@ -850,33 +854,33 @@ function Assert-WpaOwnedStagingContents {
     return $true
 }
 
-function Close-WpaRunStagingOwnershipHandles {
+function Close-WpaRunStagingOwnershipHandle {
     [CmdletBinding()]
     param([Parameter(Mandatory)][object]$Ownership)
 
     if ($null -ne $Ownership.Stream) {
-        try { $Ownership.Stream.Dispose() } catch { }
+        try { $Ownership.Stream.Dispose() } catch { Write-Verbose 'Staging ownership stream disposal failed during best-effort cleanup.' }
         $Ownership.Stream = $null
     }
     if ($Ownership.PSObject.Properties.Name -contains 'PublicationPendingMarker' -and $null -ne $Ownership.PublicationPendingMarker) {
-        try { $Ownership.PublicationPendingMarker.Dispose() } catch { }
+        try { $Ownership.PublicationPendingMarker.Dispose() } catch { Write-Verbose 'Publication pending marker disposal failed during best-effort cleanup.' }
         $Ownership.PublicationPendingMarker = $null
     }
     if ($Ownership.PSObject.Properties.Name -contains 'PublicationGuard' -and $null -ne $Ownership.PublicationGuard) {
-        try { $Ownership.PublicationGuard.Dispose() } catch { }
+        try { $Ownership.PublicationGuard.Dispose() } catch { Write-Verbose 'Publication guard disposal failed during best-effort cleanup.' }
         $Ownership.PublicationGuard = $null
     }
     if ($Ownership.PSObject.Properties.Name -contains 'DirectoryHandle' -and $null -ne $Ownership.DirectoryHandle) {
-        try { $Ownership.DirectoryHandle.Dispose() } catch { }
+        try { $Ownership.DirectoryHandle.Dispose() } catch { Write-Verbose 'Staging directory handle disposal failed during best-effort cleanup.' }
         $Ownership.DirectoryHandle = $null
     }
 }
 
-function Remove-WpaOwnedRunStagingDirectory {
+function Protect-WpaOwnedRunStagingDirectory {
     [CmdletBinding()]
     param([Parameter(Mandatory)][object]$Ownership)
 
-    Close-WpaRunStagingOwnershipHandles -Ownership $Ownership
+    Close-WpaRunStagingOwnershipHandle -Ownership $Ownership
     throw 'PREVIEW_STAGING_PRESERVED'
 }
 
@@ -902,7 +906,6 @@ function Move-WpaOwnedRunToStagingEvidence {
         $null -eq $Ownership.PublicationPendingMarker -or -not $Ownership.PublicationPendingMarker.IsOpen) {
         throw 'Owned publication marker identity is unavailable.'
     }
-    $pendingPath = [string]$Ownership.PublicationPendingPath
     $pendingMoved = $false
     for ($attempt = 0; $attempt -lt 3; $attempt++) {
         $pendingLeaf = ".wpa-publication-pending-evidence-$RunId-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
@@ -1012,14 +1015,14 @@ function Publish-WpaPreparedRun {
 
     $profilesPath = [IO.Path]::GetFullPath((Join-Path $stagingPath 'profiles'))
     $profileWrites = [System.Collections.Generic.List[object]]::new()
-    foreach ($profile in @(Get-WpaPropertyValue -InputObject $Preparation -Name 'profiles' -Default @())) {
-        $profileName = [string](Get-WpaPropertyValue -InputObject $profile -Name 'name' -Default '')
+    foreach ($profileSnapshot in @(Get-WpaPropertyValue -InputObject $Preparation -Name 'profiles' -Default @())) {
+        $profileName = [string](Get-WpaPropertyValue -InputObject $profileSnapshot -Name 'name' -Default '')
         if ($profileName -cnotmatch '^[a-z0-9][a-z0-9-]{0,31}$') { throw 'Invalid profile name.' }
         $profilePath = [IO.Path]::GetFullPath((Join-Path $profilesPath "$profileName.yaml"))
         if (-not [string]::Equals([IO.Path]::GetDirectoryName($profilePath), $profilesPath, [StringComparison]::OrdinalIgnoreCase)) {
             throw 'Profile path escapes the staging directory.'
         }
-        $profileWrites.Add([pscustomobject]@{Path=$profilePath;Text=[string](Get-WpaPropertyValue -InputObject $profile -Name 'text' -Default '')})
+        $profileWrites.Add([pscustomobject]@{Path=$profilePath;Text=[string](Get-WpaPropertyValue -InputObject $profileSnapshot -Name 'text' -Default '')})
     }
 
     $ownership = $null
@@ -1050,12 +1053,12 @@ function Publish-WpaPreparedRun {
         }
 
         Assert-WpaOwnedRunStagingTrust -Ownership $ownership | Out-Null
-        Read-WpaRunMetadata -RunPath $stagingPath | Out-Null
+        Read-WpaRunRecord -RunPath $stagingPath | Out-Null
         $stagedPlan = Read-WpaJsonFile (Get-WpaRunArtifactPath $stagingPath plan)
         Test-WpaDataSchema -Data $stagedPlan -SchemaName plan | Out-Null
         Invoke-WpaStagedPlanActionSetValidation -Actions @($stagedPlan.actions)
         Assert-WpaPlanIntegrity -Plan $stagedPlan | Out-Null
-        Assert-WpaOwnedStagingContents -Ownership $ownership | Out-Null
+        Assert-WpaOwnedStagingContent -Ownership $ownership | Out-Null
         $ownership.Stream.Dispose()
         $ownership.Stream = $null
         Assert-WpaStagingOwnershipMarkerReleased -Ownership $ownership | Out-Null
@@ -1063,7 +1066,7 @@ function Publish-WpaPreparedRun {
         Assert-WpaOwnedPublishedDirectoryTrust -Ownership $ownership -FinalPath $finalPath | Out-Null
         New-WpaOwnedPublicationPendingMarker -Ownership $ownership -FinalPath $finalPath | Out-Null
         try {
-            Assert-WpaOwnedStagingContents -Ownership $ownership -BasePath $finalPath -OwnershipReleased | Out-Null
+            Assert-WpaOwnedStagingContent -Ownership $ownership -BasePath $finalPath -OwnershipReleased | Out-Null
         } catch {
             Move-WpaOwnedRunToStagingEvidence -Ownership $ownership -RunId $runId | Out-Null
             throw 'PREVIEW_STAGING_PRESERVED'
@@ -1078,13 +1081,15 @@ function Publish-WpaPreparedRun {
                 try {
                     $ownership.PublicationGuard.Rename($stagingGuardPath)
                     $ownership.PublicationGuardPath = $stagingGuardPath
-                } catch { }
+                } catch {
+                    Write-Verbose 'Publication guard could not be returned to staging during preservation cleanup.'
+                }
             }
-            if ($null -ne $ownership) { Close-WpaRunStagingOwnershipHandles -Ownership $ownership }
+            if ($null -ne $ownership) { Close-WpaRunStagingOwnershipHandle -Ownership $ownership }
             throw 'PREVIEW_STAGING_PRESERVED'
         }
         throw
     } finally {
-        if ($null -ne $ownership) { Close-WpaRunStagingOwnershipHandles -Ownership $ownership }
+        if ($null -ne $ownership) { Close-WpaRunStagingOwnershipHandle -Ownership $ownership }
     }
 }

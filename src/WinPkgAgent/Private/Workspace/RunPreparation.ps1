@@ -59,7 +59,7 @@ function Read-WpaRunInputSnapshot {
     }
 }
 
-function New-WpaRunPreparation {
+function Get-WpaRunPreparation {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ManifestPath,
@@ -77,7 +77,7 @@ function New-WpaRunPreparation {
     $inventory = Get-WpaInventoryForPolicy -Policy $snapshot.policy
     $inventoryStatus = [string](Get-WpaPropertyValue -InputObject $inventory -Name 'status' -Default '')
     if ($inventoryStatus -cne 'success') { throw "PREVIEW_INVENTORY_NOT_TRUSTED: $inventoryStatus" }
-    $plan = New-WpaPlanObject -Manifest $snapshot.manifest -Policy $snapshot.policy -Inventory $inventory -Now $Now
+    $plan = ConvertTo-WpaPlanObject -Manifest $snapshot.manifest -Policy $snapshot.policy -Inventory $inventory -Now $Now
     $run = [pscustomobject][ordered]@{
         schemaVersion = 1
         runId = $RunId

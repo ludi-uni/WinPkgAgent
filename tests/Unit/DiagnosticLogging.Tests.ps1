@@ -13,8 +13,8 @@ Describe 'WinPkgAgent diagnostic logging boundaries' {
         }
 
         It 'hashes UTF-8 output deterministically without retaining the body' {
-            $meta=Get-WpaOutputMetadata -Text 'あ'
-            $repeat=Get-WpaOutputMetadata -Text 'あ'
+            $meta=Get-WpaOutputDigest -Text 'あ'
+            $repeat=Get-WpaOutputDigest -Text 'あ'
             $meta.hash | Should -Be $repeat.hash
             $meta.hash | Should -Match '^[0-9a-f]{64}$'
             $meta.length | Should -Be 3

@@ -91,6 +91,18 @@ Describe 'WinPkgAgent run workspace boundaries' {
             [object]::ReferenceEquals($actual, $script:stageWriteData) | Should -BeTrue
         }
 
+        It 'does not persist or report a changed stage when WhatIf declines the write' {
+            $runPath = Join-Path $TestDrive 'stage-whatif-run'
+            $run = [pscustomobject]@{runId='20260809-010203-aabbccdd';currentStage='planned'}
+            Mock Read-WpaRun { $run }
+            Mock Write-WpaAtomicJson { throw 'WRITE_GUARD' }
+
+            $actual = Set-WpaRunStage -RunPath $runPath -Stage preflighted -WhatIf
+
+            $actual.currentStage | Should -BeExactly 'planned'
+            Should -Invoke Write-WpaAtomicJson -Times 0 -Exactly
+        }
+
         It 'exports the new high-level commands without approval bypasses' {
             (Get-Command New-WpaRun,Invoke-WpaRun,Resume-WpaVerification,Initialize-WpaProject,Export-WpaManifestCandidate).Count | Should -Be 5
             (Get-Command Invoke-WpaPlan).Parameters.Keys | Should -Not -Contain 'Force'
@@ -271,7 +283,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Mock Test-WpaWingetAvailable { throw 'WINGET_PROBE_GUARD' }
                 Mock Test-WpaScoopAvailable { throw 'SCOOP_PROBE_GUARD' }
 
-                { New-WpaRunPreparation -ManifestPath $manifestPath -PolicyPath $policyPath -RunId '20260809-010203-aabbccdd' } |
+                { Get-WpaRunPreparation -ManifestPath $manifestPath -PolicyPath $policyPath -RunId '20260809-010203-aabbccdd' } |
                     Should -Throw 'INPUT_UTF8_INVALID'
 
                 Should -Invoke Test-WpaEnvironmentForPolicy -Times 0 -Exactly
@@ -283,11 +295,11 @@ Describe 'WinPkgAgent run workspace boundaries' {
             It 'stops before inventory and planning when the policy environment is not ready' {
                 Mock Test-WpaEnvironmentForPolicy { [pscustomobject]@{ready=$false} }
                 Mock Get-WpaInventoryForPolicy { throw 'INVENTORY_CALL_GUARD' }
-                Mock New-WpaPlanObject { throw 'PLAN_CALL_GUARD' }
+                Mock ConvertTo-WpaPlanObject { throw 'PLAN_CALL_GUARD' }
 
                 Push-Location $TestDrive
                 try {
-                    { New-WpaRunPreparation -ManifestPath $manifestPath -PolicyPath $policyPath -RunId '20260809-010203-aabbccdd' } |
+                    { Get-WpaRunPreparation -ManifestPath $manifestPath -PolicyPath $policyPath -RunId '20260809-010203-aabbccdd' } |
                         Should -Throw 'PREVIEW_ENVIRONMENT_NOT_READY'
                 } finally {
                     Pop-Location
@@ -295,43 +307,43 @@ Describe 'WinPkgAgent run workspace boundaries' {
 
                 Should -Invoke Test-WpaEnvironmentForPolicy -Times 1 -Exactly
                 Should -Invoke Get-WpaInventoryForPolicy -Times 0 -Exactly
-                Should -Invoke New-WpaPlanObject -Times 0 -Exactly
+                Should -Invoke ConvertTo-WpaPlanObject -Times 0 -Exactly
                 Test-Path (Join-Path $TestDrive '.wpa') | Should -BeFalse
             }
 
             It 'rejects partial inventory before planning and leaves no workspace' {
                 Mock Test-WpaEnvironmentForPolicy { [pscustomobject]@{ready=$true} }
                 Mock Get-WpaInventoryForPolicy { [pscustomobject]@{status='partial'} }
-                Mock New-WpaPlanObject { throw 'PLAN_CALL_GUARD' }
+                Mock ConvertTo-WpaPlanObject { throw 'PLAN_CALL_GUARD' }
 
                 Push-Location $TestDrive
                 try {
-                    { New-WpaRunPreparation -ManifestPath $manifestPath -PolicyPath $policyPath -RunId '20260809-010203-aabbccdd' } |
+                    { Get-WpaRunPreparation -ManifestPath $manifestPath -PolicyPath $policyPath -RunId '20260809-010203-aabbccdd' } |
                         Should -Throw 'PREVIEW_INVENTORY_NOT_TRUSTED: partial'
                 } finally {
                     Pop-Location
                 }
 
                 Should -Invoke Get-WpaInventoryForPolicy -Times 1 -Exactly
-                Should -Invoke New-WpaPlanObject -Times 0 -Exactly
+                Should -Invoke ConvertTo-WpaPlanObject -Times 0 -Exactly
                 Test-Path (Join-Path $TestDrive '.wpa') | Should -BeFalse
             }
 
             It 'rejects failed inventory before planning and leaves no workspace' {
                 Mock Test-WpaEnvironmentForPolicy { [pscustomobject]@{ready=$true} }
                 Mock Get-WpaInventoryForPolicy { [pscustomobject]@{status='failed'} }
-                Mock New-WpaPlanObject { throw 'PLAN_CALL_GUARD' }
+                Mock ConvertTo-WpaPlanObject { throw 'PLAN_CALL_GUARD' }
 
                 Push-Location $TestDrive
                 try {
-                    { New-WpaRunPreparation -ManifestPath $manifestPath -PolicyPath $policyPath -RunId '20260809-010203-aabbccdd' } |
+                    { Get-WpaRunPreparation -ManifestPath $manifestPath -PolicyPath $policyPath -RunId '20260809-010203-aabbccdd' } |
                         Should -Throw 'PREVIEW_INVENTORY_NOT_TRUSTED: failed'
                 } finally {
                     Pop-Location
                 }
 
                 Should -Invoke Get-WpaInventoryForPolicy -Times 1 -Exactly
-                Should -Invoke New-WpaPlanObject -Times 0 -Exactly
+                Should -Invoke ConvertTo-WpaPlanObject -Times 0 -Exactly
                 Test-Path (Join-Path $TestDrive '.wpa') | Should -BeFalse
             }
 
@@ -355,7 +367,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                     $script:inventoryPolicy = $Policy
                     $inventory
                 }
-                Mock New-WpaPlanObject {
+                Mock ConvertTo-WpaPlanObject {
                     param($Manifest, $Policy, $Inventory, $Now)
                     $script:planManifest = $Manifest
                     $script:planPolicy = $Policy
@@ -364,7 +376,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                     $plan
                 }
 
-                $result = New-WpaRunPreparation -ManifestPath $manifestPath -PolicyPath $policyPath -RunId '20260809-010203-aabbccdd' -Now $now
+                $result = Get-WpaRunPreparation -ManifestPath $manifestPath -PolicyPath $policyPath -RunId '20260809-010203-aabbccdd' -Now $now
 
                 [object]::ReferenceEquals($result.policy, $script:environmentPolicy) | Should -BeTrue
                 [object]::ReferenceEquals($result.policy, $script:inventoryPolicy) | Should -BeTrue
@@ -394,22 +406,22 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Test-WpaDataSchema -Data $result.run -SchemaName run | Should -BeTrue
                 Should -Invoke Test-WpaEnvironmentForPolicy -Times 1 -Exactly
                 Should -Invoke Get-WpaInventoryForPolicy -Times 1 -Exactly
-                Should -Invoke New-WpaPlanObject -Times 1 -Exactly
+                Should -Invoke ConvertTo-WpaPlanObject -Times 1 -Exactly
             }
 
             It 'rejects a non-lowercase RunId before reading inputs or probing managers' {
                 Mock Test-WpaEnvironmentForPolicy { throw 'ENVIRONMENT_CALL_GUARD' }
                 Mock Get-WpaInventoryForPolicy { throw 'INVENTORY_CALL_GUARD' }
-                Mock New-WpaPlanObject { throw 'PLAN_CALL_GUARD' }
+                Mock ConvertTo-WpaPlanObject { throw 'PLAN_CALL_GUARD' }
                 $missingManifest = Join-Path $TestDrive 'missing-manifest.yaml'
                 $missingPolicy = Join-Path $TestDrive 'missing-policy.yaml'
 
-                { New-WpaRunPreparation -ManifestPath $missingManifest -PolicyPath $missingPolicy -RunId '20260809-010203-AABBCCDD' } |
+                { Get-WpaRunPreparation -ManifestPath $missingManifest -PolicyPath $missingPolicy -RunId '20260809-010203-AABBCCDD' } |
                     Should -Throw 'RUN_ID_INVALID'
 
                 Should -Invoke Test-WpaEnvironmentForPolicy -Times 0 -Exactly
                 Should -Invoke Get-WpaInventoryForPolicy -Times 0 -Exactly
-                Should -Invoke New-WpaPlanObject -Times 0 -Exactly
+                Should -Invoke ConvertTo-WpaPlanObject -Times 0 -Exactly
             }
 
             It 'does not call file writers or directory helpers and leaves the TestDrive tree unchanged' {
@@ -417,7 +429,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 $plan = [pscustomobject]@{manifestHash=('a' * 64);policyHash=('b' * 64)}
                 Mock Test-WpaEnvironmentForPolicy { [pscustomobject]@{ready=$true} }
                 Mock Get-WpaInventoryForPolicy { $inventory }
-                Mock New-WpaPlanObject { $plan }
+                Mock ConvertTo-WpaPlanObject { $plan }
                 Mock Write-WpaAtomicJson { throw 'FILE_WRITE_GUARD: JSON writer invoked' }
                 Mock Write-WpaAtomicText { throw 'FILE_WRITE_GUARD: text writer invoked' }
                 Mock New-Item { throw 'DIRECTORY_CREATE_GUARD: New-Item invoked' }
@@ -427,7 +439,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
 
                 Push-Location $TestDrive
                 try {
-                    $null = New-WpaRunPreparation -ManifestPath $manifestPath -PolicyPath $policyPath -RunId '20260809-010203-aabbccdd'
+                    $null = Get-WpaRunPreparation -ManifestPath $manifestPath -PolicyPath $policyPath -RunId '20260809-010203-aabbccdd'
                 } finally {
                     Pop-Location
                 }
@@ -483,7 +495,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
             }
 
             It 'publishes exact prepared artifacts and returns the unchanged run only after preparation succeeds' {
-                Mock New-WpaRunPreparation {
+                Mock Get-WpaRunPreparation {
                     param($ManifestPath, $PolicyPath, $RunId, $Now)
                     $script:preparation.run.runId = $RunId
                     $script:preparation
@@ -548,7 +560,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                         $marker.Handle.GetSha256() | Should -BeExactly $marker.Hash
                     }
                 } finally {
-                    Close-WpaRunStagingOwnershipHandles -Ownership $ownership
+                    Close-WpaRunStagingOwnershipHandle -Ownership $ownership
                 }
             }
 
@@ -622,7 +634,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                     Test-Path (Join-Path $final '.wpa-publication-pending') | Should -BeTrue
                     Test-Path $ownership.PublicationGuardPath | Should -BeTrue
                 } finally {
-                    Close-WpaRunStagingOwnershipHandles -Ownership $ownership
+                    Close-WpaRunStagingOwnershipHandle -Ownership $ownership
                 }
             }
 
@@ -690,7 +702,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                     Test-Path (Join-Path $outside '.wpa-publication-guard-complete') | Should -BeFalse
                     Test-Path $ownership.PublicationGuardPath | Should -BeTrue
                 } finally {
-                    Close-WpaRunStagingOwnershipHandles -Ownership $ownership
+                    Close-WpaRunStagingOwnershipHandle -Ownership $ownership
                 }
             }
 
@@ -793,7 +805,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
             }
 
             It 'leaves no workspace when preparation fails' {
-                Mock New-WpaRunPreparation { throw 'simulated preparation failure' }
+                Mock Get-WpaRunPreparation { throw 'simulated preparation failure' }
                 $workspace = Join-Path $TestDrive 'workspace-preparation-failure'
 
                 { New-WpaRun -ManifestPath manifest.yaml -PolicyPath policy.yaml -WorkspacePath $workspace } |
@@ -1391,7 +1403,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 $ownership.StagingPath = $outside
 
                 try {
-                    { Remove-WpaOwnedRunStagingDirectory -Ownership $ownership } |
+                    { Protect-WpaOwnedRunStagingDirectory -Ownership $ownership } |
                         Should -Throw 'PREVIEW_STAGING_PRESERVED'
                 } finally {
                     if ($null -ne $ownership.Stream) { $ownership.Stream.Dispose() }
@@ -1408,7 +1420,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 $ownership.ExpectedLeaf = '.staging-other'
 
                 try {
-                    { Remove-WpaOwnedRunStagingDirectory -Ownership $ownership } |
+                    { Protect-WpaOwnedRunStagingDirectory -Ownership $ownership } |
                         Should -Throw 'PREVIEW_STAGING_PRESERVED'
                 } finally {
                     if ($null -ne $ownership.Stream) { $ownership.Stream.Dispose() }
@@ -1428,7 +1440,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Mock Remove-Item {}
 
                 try {
-                    { Remove-WpaOwnedRunStagingDirectory -Ownership $ownership } |
+                    { Protect-WpaOwnedRunStagingDirectory -Ownership $ownership } |
                         Should -Throw 'PREVIEW_STAGING_PRESERVED'
                 } finally {
                     if ($null -ne $ownership.Stream) { $ownership.Stream.Dispose() }
@@ -1451,7 +1463,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 Mock Remove-Item {}
 
                 $message = try {
-                    Remove-WpaOwnedRunStagingDirectory -Ownership $ownership
+                    Protect-WpaOwnedRunStagingDirectory -Ownership $ownership
                     ''
                 } catch {
                     $_.Exception.Message
@@ -1471,7 +1483,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 if ([string]::IsNullOrWhiteSpace($missingDrive)) { throw 'No unavailable drive letter is available for the WhatIf test.' }
                 $workspace = '{0}:\wpa-whatif-workspace' -f $missingDrive
                 $expectedRunsPath = [IO.Path]::Combine([IO.Path]::GetFullPath($workspace), 'runs')
-                Mock New-WpaRunPreparation { throw 'PREPARATION_CALLED' }
+                Mock Get-WpaRunPreparation { throw 'PREPARATION_CALLED' }
                 Mock Test-WpaEnvironmentForPolicy { throw 'ENVIRONMENT_CALLED' }
                 Mock Get-WpaInventoryForPolicy { throw 'INVENTORY_CALLED' }
                 Mock Test-WpaWingetAvailable { throw 'WINGET_CALLED' }
@@ -1497,7 +1509,7 @@ Describe 'WinPkgAgent run workspace boundaries' {
                 [IO.Path]::GetDirectoryName($result.runPath) | Should -Be $expectedRunsPath
                 [IO.Path]::GetFileName($result.runPath) | Should -Match '^20260808-010203-[a-f0-9]{8}$'
                 [IO.Directory]::Exists($workspace) | Should -BeFalse
-                Should -Invoke New-WpaRunPreparation -Times 0 -Exactly
+                Should -Invoke Get-WpaRunPreparation -Times 0 -Exactly
                 Should -Invoke Test-WpaEnvironmentForPolicy -Times 0 -Exactly
                 Should -Invoke Get-WpaInventoryForPolicy -Times 0 -Exactly
                 Should -Invoke Test-WpaWingetAvailable -Times 0 -Exactly

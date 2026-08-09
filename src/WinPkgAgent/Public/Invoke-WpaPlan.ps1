@@ -1,4 +1,5 @@
 function Invoke-WpaPlan {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Preflight', Justification='Preflight selects the parameter set; execution branches on PSCmdlet.ParameterSetName.')]
     [CmdletBinding(DefaultParameterSetName='Apply',SupportsShouldProcess,ConfirmImpact='High')]
     param(
         [Parameter(Mandatory)][string]$PlanPath,[Parameter(Mandatory,ParameterSetName='Apply')][string]$ApprovalPath,
@@ -43,8 +44,8 @@ function Invoke-WpaPlan {
     $journalSequence=0
     $journal=[pscustomobject][ordered]@{schemaVersion=1;planId=$plan.planId;startedAt=$started.ToString('o');updatedAt=$started.ToString('o');entries=@()}
     foreach($operation in $operations){
-        if($failed){$empty=Get-WpaOutputMetadata $null;$results.Add([pscustomobject]@{manager=$operation.manager;id=$operation.id;operation=$operation.operation;status='not-run';reasonCode='STOPPED_AFTER_FAILURE';exitCode=$null;durationMs=0;timedOut=$false;rebootRequired=$false;stdoutHash=$empty.hash;stderrHash=$empty.hash;stdoutLength=0;stderrLength=0;stdoutTruncated=$false;stderrTruncated=$false;failureSummary='Stopped after a previous failure.';diagnosticLoggingEnabled=[bool]$DiagnosticLogging});continue}
-        if(-not $PSCmdlet.ShouldProcess("$($operation.manager)/$($operation.id)",$operation.operation)){$empty=Get-WpaOutputMetadata $null;$results.Add([pscustomobject]@{manager=$operation.manager;id=$operation.id;operation=$operation.operation;status='what-if';reasonCode='SHOULD_PROCESS_DECLINED';exitCode=$null;durationMs=0;timedOut=$false;rebootRequired=$false;stdoutHash=$empty.hash;stderrHash=$empty.hash;stdoutLength=0;stderrLength=0;stdoutTruncated=$false;stderrTruncated=$false;failureSummary=$null;diagnosticLoggingEnabled=[bool]$DiagnosticLogging});continue}
+        if($failed){$empty=Get-WpaOutputDigest $null;$results.Add([pscustomobject]@{manager=$operation.manager;id=$operation.id;operation=$operation.operation;status='not-run';reasonCode='STOPPED_AFTER_FAILURE';exitCode=$null;durationMs=0;timedOut=$false;rebootRequired=$false;stdoutHash=$empty.hash;stderrHash=$empty.hash;stdoutLength=0;stderrLength=0;stdoutTruncated=$false;stderrTruncated=$false;failureSummary='Stopped after a previous failure.';diagnosticLoggingEnabled=[bool]$DiagnosticLogging});continue}
+        if(-not $PSCmdlet.ShouldProcess("$($operation.manager)/$($operation.id)",$operation.operation)){$empty=Get-WpaOutputDigest $null;$results.Add([pscustomobject]@{manager=$operation.manager;id=$operation.id;operation=$operation.operation;status='what-if';reasonCode='SHOULD_PROCESS_DECLINED';exitCode=$null;durationMs=0;timedOut=$false;rebootRequired=$false;stdoutHash=$empty.hash;stderrHash=$empty.hash;stdoutLength=0;stderrLength=0;stdoutTruncated=$false;stderrTruncated=$false;failureSummary=$null;diagnosticLoggingEnabled=[bool]$DiagnosticLogging});continue}
         $phase='journal-before';$external=$null
         try {
             if($journalPath){$journalSequence++;$fingerprint=@($plan.managerFingerprints|Where-Object manager -eq $operation.manager|Select-Object -First 1).fingerprint;$journal.entries=@($journal.entries)+@([pscustomobject]@{sequence=$journalSequence;operationId=(Get-WpaSha256 -Text ("$($operation.manager)/$($operation.id)/$($operation.operation)"));operationHash=(Get-WpaObjectHash $operation);planHash=$plan.planHash;manager=$operation.manager;id=$operation.id;operation=$operation.operation;managerFingerprintHash=$(if($fingerprint){Get-WpaObjectHash $fingerprint}else{$null});status='starting';recordedAt=[datetimeoffset]::UtcNow.ToString('o')});$journal.updatedAt=[datetimeoffset]::UtcNow.ToString('o');Write-WpaAtomicJson $journalPath $journal}
@@ -53,7 +54,7 @@ function Invoke-WpaPlan {
             $exitCode=[int64](Get-WpaPropertyValue $external 'ExitCode' -1);$timedOut=[bool](Get-WpaPropertyValue $external 'TimedOut' $false);$stdout=Get-WpaPropertyValue $external 'StdOut';$stderr=Get-WpaPropertyValue $external 'StdErr';$durationMs=[int](Get-WpaPropertyValue $external 'DurationMs' 0)
             $reboot=($exitCode -eq 3010) -or [bool](Get-WpaPropertyValue $external 'RebootRequired' $false)
             $ok=(($exitCode -eq 0 -or $reboot) -and -not $timedOut)
-            $stdoutMeta=Get-WpaOutputMetadata $stdout;$stderrMeta=Get-WpaOutputMetadata $stderr
+            $stdoutMeta=Get-WpaOutputDigest $stdout;$stderrMeta=Get-WpaOutputDigest $stderr
             $operationResult=[ordered]@{manager=$operation.manager;id=$operation.id;operation=$operation.operation;status=$(if($ok){'completed'}else{'failed'});reasonCode=$(if($reboot){'REBOOT_REQUIRED'}elseif($ok){'COMMAND_SUCCEEDED'}elseif($timedOut){'COMMAND_TIMED_OUT'}else{'COMMAND_FAILED'});exitCode=$exitCode;durationMs=$durationMs;timedOut=$timedOut;rebootRequired=$reboot;stdoutHash=$stdoutMeta.hash;stderrHash=$stderrMeta.hash;stdoutLength=$stdoutMeta.length;stderrLength=$stderrMeta.length;stdoutTruncated=$stdoutMeta.truncated;stderrTruncated=$stderrMeta.truncated;failureSummary=$(if($timedOut){'Command timed out.'}elseif(-not $ok){'Command failed.'}else{$null});diagnosticLoggingEnabled=[bool]$DiagnosticLogging}
             if($DiagnosticLogging){$diagnostic=ConvertTo-WpaDiagnosticText $stdout $stderr;$operationResult.diagnostic=[pscustomobject][ordered]@{text=$diagnostic.text;truncated=$diagnostic.truncated;warning='Secret removal is not complete.'}}
             $operationResult=[pscustomobject]$operationResult
@@ -63,7 +64,7 @@ function Invoke-WpaPlan {
             if(-not $ok){$failed=$true}
         }catch{
             $reasonCode=if($phase -like 'journal-*'){'JOURNAL_WRITE_FAILED'}else{'ADAPTER_EXCEPTION'}
-            $exceptionText=$_.Exception.Message;$stdoutMeta=Get-WpaOutputMetadata $null;$stderrMeta=Get-WpaOutputMetadata $exceptionText
+            $exceptionText=$_.Exception.Message;$stdoutMeta=Get-WpaOutputDigest $null;$stderrMeta=Get-WpaOutputDigest $exceptionText
             $errorResult=[ordered]@{manager=$operation.manager;id=$operation.id;operation=$operation.operation;status='failed';reasonCode=$reasonCode;exitCode=(Get-WpaPropertyValue $external 'ExitCode');durationMs=[int](Get-WpaPropertyValue $external 'DurationMs' 0);timedOut=[bool](Get-WpaPropertyValue $external 'TimedOut' $false);rebootRequired=$false;stdoutHash=$stdoutMeta.hash;stderrHash=$stderrMeta.hash;stdoutLength=$stdoutMeta.length;stderrLength=$stderrMeta.length;stdoutTruncated=$false;stderrTruncated=$false;failureSummary='Adapter execution failed.';diagnosticLoggingEnabled=[bool]$DiagnosticLogging}
             if($DiagnosticLogging){$diagnostic=ConvertTo-WpaDiagnosticText $null $exceptionText;$errorResult.diagnostic=[pscustomobject][ordered]@{text=$diagnostic.text;truncated=$diagnostic.truncated;warning='Secret removal is not complete.'}}
             $results.Add([pscustomobject]$errorResult);$failed=$true

@@ -9,7 +9,7 @@ function New-WpaPlan {
     if(-not $MarkdownPath){$MarkdownPath=[IO.Path]::ChangeExtension($OutputPath,'.md')}
     $policy=Read-WpaPolicyFile $PolicyPath; Test-WpaDataSchema $policy policy | Out-Null
     $inventory=ConvertTo-WpaInventoryBoundary (Read-WpaJsonFile $InventoryPath); Test-WpaDataSchema $inventory inventory | Out-Null
-    $plan=New-WpaPlanObject -Manifest $manifest -Policy $policy -Inventory $inventory -Now $Now
+    $plan=ConvertTo-WpaPlanObject -Manifest $manifest -Policy $policy -Inventory $inventory -Now $Now
     if($PSCmdlet.ShouldProcess($OutputPath,'Write immutable plan artifact')){Write-WpaAtomicJson $OutputPath $plan}
     if($MarkdownPath -and $PSCmdlet.ShouldProcess($MarkdownPath,'Write human-readable plan')){Write-WpaAtomicText $MarkdownPath (ConvertTo-WpaPlanMarkdown $plan)}
     return $plan

@@ -4,7 +4,7 @@ function Export-WpaUnmanagedCandidate {
     $inventory = Read-WpaJsonFile -Path $InventoryPath
     Test-WpaDataSchema -Data $inventory -SchemaName inventory | Out-Null
     $knownIds = @($inventory.packages | ForEach-Object { [string]$_.id } | Where-Object { $_ })
-    $observationResult = Get-WpaWingetUnmanagedObservations -KnownIds $knownIds
+    $observationResult = Get-WpaWingetUnmanagedObservation -KnownIds $knownIds
     $warnings = [System.Collections.Generic.List[string]]::new()
     foreach ($warning in @($inventory.warnings)) { if ($warning) { $warnings.Add([string]$warning) } }
     if ($inventory.status -ne 'success') { $warnings.Add('source inventory is not fully successful; known-ID exclusion may be incomplete') }

@@ -42,7 +42,7 @@ Describe 'WinPkgAgent planning' {
             Mock Write-WpaAtomicJson { throw 'FILE_WRITE_GUARD: JSON writer invoked' }
             Mock Write-WpaAtomicText { throw 'FILE_WRITE_GUARD: text writer invoked' }
 
-            $plan = New-WpaPlanObject -Manifest $manifest -Policy $policy -Inventory $inventory -Now $now
+            $plan = ConvertTo-WpaPlanObject -Manifest $manifest -Policy $policy -Inventory $inventory -Now $now
 
             $plan.schemaVersion | Should -Be 1
             $plan.toolVersion | Should -Be '0.1.0'

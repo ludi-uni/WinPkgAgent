@@ -5,6 +5,7 @@ function ConvertTo-WpaCliSingleQuotedLiteral {
 }
 
 function Invoke-WpaCliPreview {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseSupportsShouldProcess', '', Justification='This wrapper forwards projection-only WhatIf behavior to New-WpaRun; native ShouldProcess would change that contract.')]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ManifestPath,

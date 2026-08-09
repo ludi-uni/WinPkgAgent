@@ -69,7 +69,7 @@ function Test-WpaIso8601Timestamp {
     }
 }
 
-function Test-WpaJsonTimestampElements {
+function Test-WpaJsonTimestampElement {
     [CmdletBinding()]
     param([Parameter(Mandatory)][System.Text.Json.JsonElement]$Element)
     switch ($Element.ValueKind) {
@@ -80,21 +80,21 @@ function Test-WpaJsonTimestampElements {
                         Test-WpaIso8601Timestamp -Value $property.Value.GetString() -FieldName $property.Name
                     }
                 } else {
-                    Test-WpaJsonTimestampElements -Element $property.Value
+                    Test-WpaJsonTimestampElement -Element $property.Value
                 }
             }
         }
         Array {
-            foreach ($item in $Element.EnumerateArray()) { Test-WpaJsonTimestampElements -Element $item }
+            foreach ($item in $Element.EnumerateArray()) { Test-WpaJsonTimestampElement -Element $item }
         }
     }
 }
 
-function Test-WpaSchemaTimestamps {
+function Test-WpaSchemaTimestamp {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Json)
     $document = [System.Text.Json.JsonDocument]::Parse($Json)
-    try { Test-WpaJsonTimestampElements -Element $document.RootElement } finally { $document.Dispose() }
+    try { Test-WpaJsonTimestampElement -Element $document.RootElement } finally { $document.Dispose() }
 }
 
 function Test-WpaDataSchema {
@@ -110,7 +110,7 @@ function Test-WpaDataSchema {
     if (-not (Test-Json -Json $json -SchemaFile $schemaPath -ErrorVariable errors)) {
         throw "Data does not match $SchemaName schema: $($errors -join '; ')"
     }
-    Test-WpaSchemaTimestamps -Json $json
+    Test-WpaSchemaTimestamp -Json $json
     return $true
 }
 
