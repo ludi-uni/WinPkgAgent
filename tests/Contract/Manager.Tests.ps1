@@ -406,7 +406,18 @@ Describe 'manager contract parsers' {
             $result.Success | Should -BeTrue
         }
     }
-    It 'builds scoop install spec as one literal argument' { InModuleScope WinPkgAgent { Mock Invoke-WpaProcess { [pscustomobject]@{ExitCode=0} }; Install-WpaScoopPackage -Id git -Version 2.45.1 -Source main; Assert-MockCalled Invoke-WpaProcess -ParameterFilter { $Arguments[1] -eq 'main/git@2.45.1' -and $Arguments[2] -eq '--no-update-scoop' } } }
+    It 'builds scoop install spec as one literal argument' {
+        InModuleScope WinPkgAgent {
+            Mock Resolve-WpaManagerExecutable { 'C:\fixtures\scoop.cmd' }
+            Mock Invoke-WpaProcess { [pscustomobject]@{ ExitCode = 0 } }
+
+            Install-WpaScoopPackage -Id git -Version 2.45.1 -Source main
+
+            Assert-MockCalled Invoke-WpaProcess -ParameterFilter {
+                $Arguments[1] -eq 'main/git@2.45.1' -and $Arguments[2] -eq '--no-update-scoop'
+            }
+        }
+    }
     It 'accepts English and Japanese fallback headers only' { InModuleScope WinPkgAgent { (ConvertFrom-WpaWingetFallback "Name Version`nContoso.App 1.2.3").Count | Should -Be 1; (ConvertFrom-WpaWingetFallback "名前 バージョン`nContoso.App 1.2.3").Count | Should -Be 1; ConvertFrom-WpaWingetFallback 'Unknown locale output' | Should -BeNullOrEmpty } }
     It 'preserves special characters in display identifiers' { InModuleScope WinPkgAgent { $x=ConvertFrom-WpaWingetExport '{"Sources":[{"Packages":[{"PackageIdentifier":"Contoso.App_+Test","Version":"1.0"}]}]}'; $x[0].Id | Should -Be 'Contoso.App_+Test' } }
     It 'parses update metadata only with known locale headers' { InModuleScope WinPkgAgent { (ConvertFrom-WpaWingetUpgrade "Name  Id  Version  Available`nContoso App  Contoso.App  1.0  2.0").Items[0].AvailableVersion | Should -Be '2.0'; ConvertFrom-WpaWingetUpgrade 'x y z' | Should -BeNullOrEmpty } }
