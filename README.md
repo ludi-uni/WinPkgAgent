@@ -25,11 +25,15 @@ Every declared package also requires an explicit source and category. Scoop inve
 
 ## Workflow
 
-1. `Get-WpaInventory` records manager capabilities and uncertainty.
+1. `Get-WpaInventory -PolicyPath ...` records only the managers selected by the explicit policy, plus capabilities and uncertainty.
 2. `New-WpaPlan` compares a manifest with that inventory and emits deterministic JSON/Markdown artifacts.
 3. `Approve-WpaPlan` is a separate interactive action requiring typed digest confirmation.
 4. `Invoke-WpaPlan` revalidates hashes, approval, environment, policy, freshness, and manager availability before sequential execution.
 5. Verification reacquires inventory and reports uncertainty; it never claims rollback.
+
+Policy selection is explicit and is never inferred from the host, PATH, or Codex. Use `config/policy.codex.yaml` for a Scoop-only Codex-constrained scope, or `config/policy.desktop.yaml` / `config/policy.default.yaml` for a desktop WinGet+Scoop scope. The same policy file must be used for environment checks, inventory, planning, apply, and verification.
+
+Inventory artifacts are schema v2 and carry `policyHash` and `managerScope`. Regenerate any schema-v1 or unscoped inventory before planning. Plans fail closed when the inventory policy hash or manager scope does not match the selected policy (`INVENTORY_SCOPE_MISMATCH`).
 
 See [docs/architecture.md](docs/architecture.md), [docs/safety.md](docs/safety.md), and [docs/usage.md](docs/usage.md).
 
@@ -70,7 +74,8 @@ Typical plan actions are `no-op`, `install`, `upgrade`, `blocked`, `unmanaged`, 
 
 ```powershell
 Test-WpaEnvironment
-Get-WpaInventory -OutputPath ./artifacts/inventory.json
+Get-WpaInventory -PolicyPath ./config/policy.default.yaml `
+  -OutputPath ./artifacts/inventory.json
 Test-WpaManifest -Path ./config/packages.example.yaml
 New-WpaPlan -ManifestPath ./config/packages.example.yaml `
   -PolicyPath ./config/policy.default.yaml `
@@ -81,6 +86,39 @@ Show-WpaPlan -PlanPath ./artifacts/plan.json
 # A human reviews and runs Approve-WpaPlan interactively.
 Invoke-WpaPlan -PlanPath ./artifacts/plan.json `
   -PolicyPath ./config/policy.default.yaml -Preflight
+```
+
+For a Codex/Scoop-only inventory and plan, select the policy explicitly:
+
+```powershell
+Get-WpaInventory -PolicyPath ./config/policy.codex.yaml -OutputPath ./artifacts/codex-inventory.json
+New-WpaPlan -ManifestPath ./config/packages.example.yaml `
+  -PolicyPath ./config/policy.codex.yaml `
+  -InventoryPath ./artifacts/codex-inventory.json `
+  -OutputPath ./artifacts/codex-plan.json `
+  -MarkdownPath ./artifacts/codex-plan.md
+```
+
+Under the Codex/Scoop-only policy, a manifest package declared for WinGet is blocked with `MANAGER_NOT_ALLOWED`. winpkg-agent does not fallback or remap it to Scoop, change `PATH` or execution policy, alter App Installer/OS policy, elevate, install managers, or bypass approval. `MANAGER_UNAVAILABLE` means an allowed manager could not be used; `INVENTORY_SCOPE_MISMATCH` means the inventory's policy hash or manager scope is not the selected policy.
+
+## Safe preview
+
+Preview creates a reviewable run summary without approval or apply:
+
+```powershell
+pwsh ./scripts/winpkg-agent.ps1 preview -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/policy.codex.yaml -WorkspacePath ./.wpa
+pwsh ./scripts/winpkg-agent.ps1 preview -ManifestPath ./config/packages.example.yaml -PolicyPath ./config/policy.desktop.yaml -WorkspacePath ./.wpa
+```
+
+Exit code `0` means the preview is ready, `1` means a fatal trust/publication failure occurred and no completed run exists, and `2` means a completed reviewable blocked run exists with `blockedReasons`. Preview never approves, applies, installs dependencies, mutates `PATH`, adds sources, elevates, or remaps managers.
+
+After a successful preview, review and apply only as a separate human-controlled sequence:
+
+```powershell
+pwsh ./scripts/winpkg-agent.ps1 show-run -RunPath <run-path>
+pwsh ./scripts/winpkg-agent.ps1 approve-run -RunPath <run-path>
+pwsh ./scripts/winpkg-agent.ps1 invoke-run -RunPath <run-path> -WhatIf
+pwsh ./scripts/winpkg-agent.ps1 invoke-run -RunPath <run-path>
 ```
 
 Example plan row:

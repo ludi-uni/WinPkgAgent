@@ -32,7 +32,7 @@ Describe 'WinPkgAgent canonical data and validation' {
         }
 
         It 'creates a stable inventory state hash without collection timestamps' {
-            $one = [pscustomobject]@{ environment = @{ id = 'env' }; managers = @(@{ manager='winget'; status='success'; version='1.0' }); packages=@(@{ manager='winget'; id='A.B'; installedVersion='1.0'; availableVersion=$null; source='winget'; scope='user' }); collectedAt='2026-01-01T00:00:00Z' }
+            $one = [pscustomobject]@{ schemaVersion=2; policyHash=('a' * 64); managerScope=@('winget'); environment = @{ id = 'env' }; managers = @(@{ manager='winget'; status='success'; version='1.0' }); packages=@(@{ manager='winget'; id='A.B'; installedVersion='1.0'; availableVersion=$null; source='winget'; scope='user' }); collectedAt='2026-01-01T00:00:00Z' }
             $two = $one.PSObject.Copy(); $two.collectedAt = '2026-02-01T00:00:00Z'
             (Get-WpaInventoryStateHash $one) | Should -Be (Get-WpaInventoryStateHash $two)
         }

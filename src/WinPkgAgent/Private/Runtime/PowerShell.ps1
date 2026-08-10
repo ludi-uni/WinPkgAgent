@@ -1,4 +1,4 @@
-function Get-WpaPowerShellCandidateLabels {
+function Get-WpaPowerShellCandidateLabel {
     @('current-process','configured','path','program-files','preview','windows-app-alias','dotnet-tool')
 }
 
@@ -17,7 +17,7 @@ function Get-WpaPowerShellFileFingerprint {
     }
     $fullPath=[IO.Path]::GetFullPath($item.FullName);$bytes=[IO.File]::ReadAllBytes($fullPath)
     $signatureStatus='unavailable';$signerSubject=$null
-    try{$signature=Get-AuthenticodeSignature -LiteralPath $fullPath -ErrorAction Stop;if($null -ne $signature){$signatureStatus=[string]$signature.Status;$signerSubject=if($signature.SignerCertificate){[string]$signature.SignerCertificate.Subject}else{$null}}}catch{}
+    try{$signature=Get-AuthenticodeSignature -LiteralPath $fullPath -ErrorAction Stop;if($null -ne $signature){$signatureStatus=[string]$signature.Status;$signerSubject=if($signature.SignerCertificate){[string]$signature.SignerCertificate.Subject}else{$null}}}catch{Write-Verbose 'Authenticode metadata was unavailable; the fingerprint retains unavailable signature evidence.'}
     [pscustomobject][ordered]@{resolvedPath=$fullPath;pathHash=(Get-WpaSha256 -Text $fullPath.ToLowerInvariant());fileSha256=([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))).ToLowerInvariant();fileLength=[int64]$item.Length;lastWriteTimeUtc=$item.LastWriteTimeUtc.ToString('o');signatureStatus=$signatureStatus;signerSubject=$signerSubject;isReparsePoint=$false}
 }
 
@@ -57,7 +57,7 @@ function Test-WpaPowerShellExecutable {
 function Resolve-WpaPowerShellExecutable {
     [CmdletBinding()]
     param([AllowNull()][string]$PowerShellPath)
-    $labels=Get-WpaPowerShellCandidateLabels
+    $labels=Get-WpaPowerShellCandidateLabel
     if($PowerShellPath){$configured=Test-WpaPowerShellExecutable -Path $PowerShellPath -Source configured;if(-not $configured.compatible){throw "$($configured.reasonCode): $($configured.reason)"};return $configured}
     if($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.PSVersion -ge [version]'7.4.0'){
         $currentPath=[Environment]::ProcessPath;$current=Test-WpaPowerShellExecutable -Path $currentPath -Source current-process;if($current.compatible){return $current}
@@ -79,7 +79,7 @@ function Resolve-WpaPowerShellExecutable {
 function Get-WpaPowerShellRuntimeInfo {
     [CmdletBinding()]
     param([AllowNull()][string]$PowerShellPath)
-    try{return Resolve-WpaPowerShellExecutable -PowerShellPath $PowerShellPath}catch{$message=$_.Exception.Message;$code=if($message -match '^([A-Z0-9_]+):'){$Matches[1]}else{'POWERSHELL_7_NOT_FOUND'};return [pscustomobject][ordered]@{available=$false;compatible=$false;version=$null;edition=$null;source=$null;pathHash=$null;fileSha256=$null;fileLength=$null;lastWriteTimeUtc=$null;signatureStatus=$null;signerSubject=$null;isReparsePoint=$null;reasonCode=$code;reason=$message;checkedCandidates=Get-WpaPowerShellCandidateLabels}}
+    try{return Resolve-WpaPowerShellExecutable -PowerShellPath $PowerShellPath}catch{$message=$_.Exception.Message;$code=if($message -match '^([A-Z0-9_]+):'){$Matches[1]}else{'POWERSHELL_7_NOT_FOUND'};return [pscustomobject][ordered]@{available=$false;compatible=$false;version=$null;edition=$null;source=$null;pathHash=$null;fileSha256=$null;fileLength=$null;lastWriteTimeUtc=$null;signatureStatus=$null;signerSubject=$null;isReparsePoint=$null;reasonCode=$code;reason=$message;checkedCandidates=Get-WpaPowerShellCandidateLabel}}
 }
 
 function ConvertTo-WpaPowerShellRuntimeArtifact {

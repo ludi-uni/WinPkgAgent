@@ -12,7 +12,7 @@ function Get-WpaRunArtifactPath {
     return $path
 }
 
-function Read-WpaRun {
+function Read-WpaRunRecord {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$RunPath)
     $runFile=Get-WpaRunArtifactPath -RunPath $RunPath -Artifact run
@@ -26,26 +26,53 @@ function Read-WpaRun {
     return $run
 }
 
+function Read-WpaRun {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RunPath)
+    $runFull=[IO.Path]::GetFullPath($RunPath)
+    $pendingPath=[IO.Path]::Combine($runFull,'.wpa-publication-pending')
+    $runLeaf=[IO.Path]::GetFileName($runFull.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar))
+    $guardPath=[IO.Path]::Combine([IO.Path]::GetDirectoryName($runFull),".wpa-publication-guard-$runLeaf")
+    if((Test-Path -LiteralPath $guardPath -ErrorAction Stop) -or (Test-Path -LiteralPath $pendingPath -ErrorAction Stop)){throw 'RUN_PUBLICATION_PENDING'}
+    Read-WpaRunRecord -RunPath $runFull
+}
+
 function New-WpaRun {
     [CmdletBinding(SupportsShouldProcess)]
     param([Parameter(Mandatory)][string]$ManifestPath,[Parameter(Mandatory)][string]$PolicyPath,[string]$WorkspacePath='./.wpa',[datetimeoffset]$Now=[datetimeoffset]::UtcNow)
-    $workspace=[IO.Path]::GetFullPath($WorkspacePath);$cursor=$workspace;while($cursor){$item=Get-Item -LiteralPath $cursor -Force -ErrorAction SilentlyContinue;if($null -ne $item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Workspace paths may not contain reparse points.'};$next=Split-Path $cursor -Parent;if($next -eq $cursor){break};$cursor=$next};$runs=Join-Path $workspace 'runs';$stamp=$Now.ToUniversalTime().ToString('yyyyMMdd-HHmmss');$runId=($stamp+'-'+([guid]::NewGuid().ToString('N').Substring(0,8)));$runPath=Join-Path $runs $runId
+    $workspace=[IO.Path]::GetFullPath($WorkspacePath);$runs=[IO.Path]::Combine($workspace,'runs');$stamp=$Now.ToUniversalTime().ToString('yyyyMMdd-HHmmss');$runId=($stamp+'-'+([guid]::NewGuid().ToString('N').Substring(0,8)));$runPath=[IO.Path]::Combine($runs,$runId)
     if(-not $PSCmdlet.ShouldProcess($runPath,'Create WinPkgAgent run workspace')){return [pscustomobject]@{runPath=$runPath;whatIf=$true}}
-    if(Test-Path -LiteralPath $runPath){throw 'Run workspace already exists.'};[IO.Directory]::CreateDirectory($runPath)|Out-Null
-    $manifestText=Read-WpaTextFile -Path $ManifestPath;$policyText=Read-WpaTextFile -Path $PolicyPath;Write-WpaAtomicText (Get-WpaRunArtifactPath $runPath manifest) $manifestText;Write-WpaAtomicText (Get-WpaRunArtifactPath $runPath policy) $policyText
-    $manifest=Read-WpaYamlFile -Path $ManifestPath;$sourceManifestDirectory=Split-Path ([IO.Path]::GetFullPath($ManifestPath)) -Parent;$profileNames=@(Get-WpaPropertyValue $manifest 'profiles' @());if($profileNames.Count -gt 0){$profileDirectory=Join-Path $runPath 'profiles';[IO.Directory]::CreateDirectory($profileDirectory)|Out-Null;foreach($profileName in $profileNames){if($profileName -notmatch '^[a-z0-9][a-z0-9-]{0,31}$'){throw 'Invalid profile name.'};$profileCandidates=@((Join-Path $sourceManifestDirectory "profiles/$profileName.yaml"),(Join-Path $sourceManifestDirectory "../profiles/$profileName.yaml"),(Join-Path $sourceManifestDirectory "../profiles/$profileName.example.yaml"));$profileSource=$profileCandidates|Where-Object {Test-Path -LiteralPath $_}|Select-Object -First 1;if(-not $profileSource){throw "Profile not found: $profileName"};Write-WpaAtomicText (Join-Path $profileDirectory "$profileName.yaml") (Read-WpaTextFile -Path $profileSource)}}
-    $inventory=Get-WpaInventory;Write-WpaAtomicJson (Get-WpaRunArtifactPath $runPath inventory) $inventory
-    $plan=New-WpaPlan -ManifestPath (Get-WpaRunArtifactPath $runPath manifest) -PolicyPath (Get-WpaRunArtifactPath $runPath policy) -InventoryPath (Get-WpaRunArtifactPath $runPath inventory) -OutputPath (Get-WpaRunArtifactPath $runPath plan) -MarkdownPath (Get-WpaRunArtifactPath $runPath planMarkdown)
-    $run=[pscustomobject][ordered]@{schemaVersion=1;runId=$runId;createdAt=$Now.ToUniversalTime().ToString('o');manifestHash=$plan.manifestHash;policyHash=$plan.policyHash;manifestPath='manifest.yaml';policyPath='policy.yaml';inventoryPath='inventory.json';planPath='plan.json';approvalPath='approval.json';applyResultPath='apply-result.json';verifyResultPath='verify-result.json';journalPath='journal.json';summaryPath='summary.md';currentStage='planned'}
-    Write-WpaAtomicJson (Get-WpaRunArtifactPath $runPath run) $run;return $run
+    $workspace=Resolve-WpaTrustedWorkspacePath -WorkspacePath $workspace
+    $preparation=Get-WpaRunPreparation -ManifestPath $ManifestPath -PolicyPath $PolicyPath -Now $Now -RunId $runId
+    Publish-WpaPreparedRun -Preparation $preparation -WorkspacePath $workspace | Out-Null
+    return $preparation.run
 }
 
 function Get-WpaRun { [CmdletBinding()]param([Parameter(Mandatory)][string]$RunPath) Read-WpaRun $RunPath }
 function Show-WpaRun { [CmdletBinding()]param([Parameter(Mandatory)][string]$RunPath) $run=Read-WpaRun $RunPath;Show-WpaPlan -PlanPath (Get-WpaRunArtifactPath $RunPath plan);$run }
-function Set-WpaRunStage { param([Parameter(Mandatory)][string]$RunPath,[Parameter(Mandatory)][ValidateSet('created','planned','preflighted','approved','applying','applied','verification-deferred','verified','failed')][string]$Stage) $run=Read-WpaRun $RunPath;$run.currentStage=$Stage;Write-WpaAtomicJson (Get-WpaRunArtifactPath $RunPath run) $run;return $run }
-function Approve-WpaRun { [CmdletBinding(SupportsShouldProcess)]param([Parameter(Mandatory)][string]$RunPath) $run=Read-WpaRun $RunPath;$approval=Approve-WpaPlan -PlanPath (Get-WpaRunArtifactPath $RunPath plan) -OutputPath (Get-WpaRunArtifactPath $RunPath approval) -WhatIf:$WhatIfPreference;if(-not $WhatIfPreference){Set-WpaRunStage -RunPath $RunPath -Stage approved|Out-Null};$approval }
-function Invoke-WpaRun { [CmdletBinding()]param([Parameter(Mandatory)][string]$RunPath,[switch]$WhatIf,[switch]$DiagnosticLogging)
-    $run=Read-WpaRun $RunPath;$planPath=Get-WpaRunArtifactPath $RunPath plan;$policyPath=Get-WpaRunArtifactPath $RunPath policy
+function Set-WpaRunStage {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$RunPath,
+        [Parameter(Mandatory)]
+        [ValidateSet('created','planned','preflighted','approved','applying','applied','verification-deferred','verified','failed')]
+        [string]$Stage
+    )
+
+    $run = Read-WpaRun -RunPath $RunPath
+    $runFile = Get-WpaRunArtifactPath -RunPath $RunPath -Artifact run
+    if ($PSCmdlet.ShouldProcess($runFile, "Set run stage to '$Stage'")) {
+        $run.currentStage = $Stage
+        Write-WpaAtomicJson -Path $runFile -Data $run
+    }
+    return $run
+}
+function Approve-WpaRun { [CmdletBinding(SupportsShouldProcess)]param([Parameter(Mandatory)][string]$RunPath) Read-WpaRun -RunPath $RunPath|Out-Null;$approval=Approve-WpaPlan -PlanPath (Get-WpaRunArtifactPath $RunPath plan) -OutputPath (Get-WpaRunArtifactPath $RunPath approval) -WhatIf:$WhatIfPreference;if(-not $WhatIfPreference){Set-WpaRunStage -RunPath $RunPath -Stage approved|Out-Null};$approval }
+function Invoke-WpaRun {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseSupportsShouldProcess', '', Justification='The explicit WhatIf parameter requests trusted preflight; native ShouldProcess would change this public contract.')]
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RunPath,[switch]$WhatIf,[switch]$DiagnosticLogging)
+    Read-WpaRun -RunPath $RunPath|Out-Null;$planPath=Get-WpaRunArtifactPath $RunPath plan;$policyPath=Get-WpaRunArtifactPath $RunPath policy
     if($WhatIf){$result=Invoke-WpaPlan -PlanPath $planPath -PolicyPath $policyPath -Preflight -WhatIf:$false;Set-WpaRunStage -RunPath $RunPath -Stage preflighted|Out-Null}
     else{$result=Invoke-WpaPlan -PlanPath $planPath -ApprovalPath (Get-WpaRunArtifactPath $RunPath approval) -PolicyPath $policyPath -OutputPath (Get-WpaRunArtifactPath $RunPath apply) -VerifyOutputPath (Get-WpaRunArtifactPath $RunPath verify) -SummaryPath (Get-WpaRunArtifactPath $RunPath summary) -DiagnosticLogging:$DiagnosticLogging;$stage=if($result.verify.status -eq 'reboot-required'){'verification-deferred'}elseif($result.verify.status -eq 'success'){'verified'}elseif($result.apply.status -eq 'failed' -or $result.apply.status -eq 'partial-failure'){'failed'}else{'applied'};Set-WpaRunStage -RunPath $RunPath -Stage $stage|Out-Null};$result
 }

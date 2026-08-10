@@ -181,4 +181,10 @@ Describe 'WinPkgAgent CLI exit-code contract' {
         Get-WpaCliExitCode -Command invoke -Result ([pscustomobject]@{apply=@{status='success'};verify=@{status='indeterminate'}}) | Should -Be 4
         Get-WpaCliExitCode -Command invoke -Result ([pscustomobject]@{apply=@{status='success'};verify=@{status='reboot-required'}}) | Should -Be 5
     }
+
+    It 'maps only blocked previews to exit code two' {
+        Get-WpaCliExitCode -Command preview -Result ([pscustomobject]@{status='blocked';blockedCount=1}) | Should -Be 2
+        Get-WpaCliExitCode -Command preview -Result ([pscustomobject]@{status='ready';blockedCount=0}) | Should -Be 0
+        Get-WpaCliExitCode -Command preview -Result ([pscustomobject]@{status='what-if';blockedCount=0}) | Should -Be 0
+    }
 }

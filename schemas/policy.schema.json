@@ -9,7 +9,7 @@
     "schemaVersion": { "const": 1 },
     "allowInstall": { "type": "boolean" },
     "allowUpgrade": { "type": "array", "uniqueItems": true, "items": { "enum": ["patch", "minor"] } },
-    "allowedManagers": { "type": "array", "uniqueItems": true, "items": { "enum": ["winget", "scoop"] } },
+    "allowedManagers": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["winget", "scoop"] } },
     "allowedSources": { "type": "array", "uniqueItems": true, "items": { "enum": ["winget", "main", "extras", "versions"] } },
     "protectedPackages": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
     "dangerousCategories": {

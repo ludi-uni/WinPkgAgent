@@ -1,9 +1,17 @@
 function Get-WpaInventoryAggregate {
     [CmdletBinding()]
-    param([hashtable]$Adapters,[datetime]$CollectedAt=(Get-Date).ToUniversalTime())
+    param(
+        [hashtable]$Adapters,
+        [Parameter(Mandatory)][string[]]$Managers,
+        [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{64}$')][string]$PolicyHash,
+        [datetime]$CollectedAt=(Get-Date).ToUniversalTime()
+    )
     if($null -eq $Adapters){$Adapters=@{winget={Get-WpaWingetInventory};scoop={Get-WpaScoopInventory}}}
-    $managers=@(); $packages=@(); $warnings=@(); $inventoryWarnings=@()
-    foreach($name in @('winget','scoop')) {
+    $managerScope=@($Managers | ForEach-Object {([string]$_).ToLowerInvariant()} | Sort-Object -Unique)
+    if($managerScope.Count -lt 1){throw 'INVENTORY_MANAGER_SCOPE_INVALID: manager selection must not be empty.'}
+    if(@($managerScope | Where-Object {$_ -notin @('winget','scoop')}).Count -gt 0){throw 'INVENTORY_MANAGER_SCOPE_INVALID: unknown manager selected.'}
+    $managerRecords=@(); $packages=@(); $warnings=@(); $inventoryWarnings=@()
+    foreach($name in $managerScope) {
         $adapter=$Adapters[$name]
         if($null -eq $adapter){$r=[pscustomobject]@{Available=$false;Success=$false;Packages=@();Warning='manager unavailable';TimedOut=$false}}
         else {
@@ -21,13 +29,14 @@ function Get-WpaInventoryAggregate {
             if($fingerprintWarning.Length -gt $maxWarningPartLength){$fingerprintWarning=$fingerprintWarning.Substring(0,$maxWarningPartLength)}
             $managerWarning=if($managerWarning){$managerWarning+'; '+$fingerprintWarning}else{$fingerprintWarning}
         }
-        $managers += [pscustomobject]@{manager=$name;version=(Get-WpaPropertyValue $r 'version');status=$managerStatus;timedOut=[bool](Get-WpaPropertyValue $r 'TimedOut' $false);warning=$managerWarning;fingerprint=$fingerprint}
+        $managerRecords += [pscustomobject]@{manager=$name;version=(Get-WpaPropertyValue $r 'version');status=$managerStatus;timedOut=[bool](Get-WpaPropertyValue $r 'TimedOut' $false);warning=$managerWarning;fingerprint=$fingerprint}
         if($managerPackages.Count -gt 0){$packages += $managerPackages}
         if($managerWarning){$warnings += [string]$managerWarning}
         if($adapterWarning){$inventoryWarnings += [string]$adapterWarning}
     }
-    $usable=@($managers | Where-Object status -in @('success','partial')).Count;$successful=@($managers | Where-Object status -eq 'success').Count
-    $status=if($usable -eq 0){'failed'}elseif($successful -lt 2 -or $inventoryWarnings.Count -gt 0){'partial'}else{'success'}
+    $usable=@($managerRecords | Where-Object { $_.status -in @('success','partial') }).Count
+    $successful=@($managerRecords | Where-Object { $_.status -eq 'success' }).Count
+    $status=if($usable -eq 0){'failed'}elseif($successful -lt $managerScope.Count -or $inventoryWarnings.Count -gt 0){'partial'}else{'success'}
     $envId=if(Get-Command Get-WpaEnvironmentId -ErrorAction SilentlyContinue){Get-WpaEnvironmentId}else{$null}
-    [pscustomobject]@{schemaVersion=1;environment=[pscustomobject]@{id=$envId};collectedAt=$CollectedAt.ToUniversalTime().ToString('o');status=$status;managers=@($managers);packages=@($packages);warnings=@($warnings)}
+    [pscustomobject]@{schemaVersion=2;policyHash=$PolicyHash;managerScope=@($managerScope);environment=[pscustomobject]@{id=$envId};collectedAt=$CollectedAt.ToUniversalTime().ToString('o');status=$status;managers=@($managerRecords);packages=@($packages);warnings=@($warnings)}
 }

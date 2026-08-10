@@ -13,8 +13,8 @@ Describe 'WinPkgAgent diagnostic logging boundaries' {
         }
 
         It 'hashes UTF-8 output deterministically without retaining the body' {
-            $meta=Get-WpaOutputMetadata -Text 'あ'
-            $repeat=Get-WpaOutputMetadata -Text 'あ'
+            $meta=Get-WpaOutputDigest -Text 'あ'
+            $repeat=Get-WpaOutputDigest -Text 'あ'
             $meta.hash | Should -Be $repeat.hash
             $meta.hash | Should -Match '^[0-9a-f]{64}$'
             $meta.length | Should -Be 3
@@ -24,7 +24,7 @@ Describe 'WinPkgAgent diagnostic logging boundaries' {
         It 'does not write artifacts under WhatIf' {
             $script:policy=[pscustomobject]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch','minor');allowUninstall=$false;allowedManagers=@('scoop');allowedSources=@('main');protectedPackages=@();dangerousCategories=@('driver');requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=30;rebootHandling='record-only';unknownVersionHandling='block'}
             $fingerprint=[pscustomobject]@{manager='scoop';pathHash=('a'*64);fileSha256=('b'*64);fileVersion=$null;lastWriteTimeUtc='2026-01-01T00:00:00Z';fileLength=1;isReparsePoint=$false;signatureStatus='not-applicable';signerSubject=$null;aclAssessment='trusted'}
-            $script:inventory=[pscustomobject]@{schemaVersion=1;environment=@{id='env'};status='success';managers=@(@{manager='scoop';status='success';version='1';fingerprint=$fingerprint});packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
+            $script:inventory=[pscustomobject]@{schemaVersion=2;policyHash=(Get-WpaObjectHash $policy);managerScope=@('scoop');environment=@{id='env'};status='success';managers=@(@{manager='scoop';status='success';version='1';fingerprint=$fingerprint});packages=@();warnings=@();collectedAt='2026-01-01T00:00:00Z'}
             $action=[pscustomobject]@{name='tool';manager='scoop';id='tool';source='main';classification='install';operation='install';reasonCode='PACKAGE_NOT_INSTALLED';reason='missing';risk='low';targetVersion=$null;verification=$null}
             $script:plan=[pscustomobject][ordered]@{schemaVersion=1;toolVersion='0.1.0';planId=[guid]::NewGuid().ToString();createdAt='2026-01-01T00:00:00Z';expiresAt='2099-01-01T00:00:00Z';environmentId='env';manifestHash=('a'*64);policyHash=(Get-WpaObjectHash $policy);inventoryHash=(Get-WpaInventoryStateHash $inventory);managerFingerprints=@([pscustomobject]@{manager='scoop';fingerprint=$fingerprint});actions=@($action);blockedOperations=@();warnings=@();contentHash=$null;planHash=$null}
             $plan.contentHash=Get-WpaObjectHash (Get-WpaPlanContent $plan);$plan.planHash=Get-WpaObjectHash (Get-WpaPlanHashInput $plan)

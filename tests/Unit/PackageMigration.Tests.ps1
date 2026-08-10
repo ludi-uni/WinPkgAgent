@@ -29,7 +29,7 @@ Describe 'package migration candidate export' {
             Export-WpaManifestCandidate -InventoryPath 'inventory.json' -OutputPath $output | Out-Null
 
             $text = Get-Content -LiteralPath $output -Raw
-            $text | Should -Match "^profiles: \[\]"
+            $text | Should -Match "(?m)^profiles: \[\]\r?$"
             $text | Should -Match "name: 'notepad-.notepad'"
             $text | Should -Match "version: '8.9.6.4'"
             $text | Should -Match 'reviewStatus: pending'

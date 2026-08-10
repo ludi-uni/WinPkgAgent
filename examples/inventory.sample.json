@@ -1,11 +1,49 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "policyHash": "1756ff7ed2d3e16b1b0d153edcd85f7d2bb96f7f404b91ae5dfcacc90c6f0fd5",
+  "managerScope": ["scoop", "winget"],
   "environment": { "id": "0000000000000000000000000000000000000000000000000000000000000000" },
   "collectedAt": "2026-08-04T00:00:00Z",
   "status": "success",
   "managers": [
-    { "manager": "winget", "version": "v1.12.350", "status": "success", "timedOut": false, "warning": null },
-    { "manager": "scoop", "version": "0.5.3", "status": "success", "timedOut": false, "warning": null }
+    {
+      "manager": "winget",
+      "version": "v1.12.350",
+      "status": "success",
+      "timedOut": false,
+      "warning": null,
+      "fingerprint": {
+        "manager": "winget",
+        "pathHash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "fileSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "fileVersion": "1.12.350",
+        "lastWriteTimeUtc": "2026-08-04T00:00:00Z",
+        "fileLength": 123456,
+        "isReparsePoint": false,
+        "signatureStatus": "valid",
+        "signerSubject": "CN=Microsoft Corporation",
+        "aclAssessment": "trusted"
+      }
+    },
+    {
+      "manager": "scoop",
+      "version": "0.5.3",
+      "status": "success",
+      "timedOut": false,
+      "warning": null,
+      "fingerprint": {
+        "manager": "scoop",
+        "pathHash": "3333333333333333333333333333333333333333333333333333333333333333",
+        "fileSha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "fileVersion": "0.5.3",
+        "lastWriteTimeUtc": "2026-08-04T00:00:00Z",
+        "fileLength": 654321,
+        "isReparsePoint": false,
+        "signatureStatus": "valid",
+        "signerSubject": null,
+        "aclAssessment": "trusted"
+      }
+    }
   ],
   "packages": [
     { "manager": "winget", "id": "7zip.7zip", "displayName": "7-Zip", "installedVersion": "24.09", "availableVersion": null, "source": "winget", "scope": "machine", "metadata": {} },

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory,Position=0)][ValidateSet('environment','inventory','manifest','plan','show','approve','validate-plan','invoke','new-run','get-run','show-run','approve-run','invoke-run','resume-verify','initialize','export-candidate','unmanaged-candidate')][string]$Command,
+    [Parameter(Mandatory,Position=0)][ValidateSet('environment','inventory','manifest','plan','show','approve','validate-plan','invoke','preview','new-run','get-run','show-run','approve-run','invoke-run','resume-verify','initialize','export-candidate','unmanaged-candidate')][string]$Command,
     [string]$Path,[string]$ManifestPath,[string]$PolicyPath,[string]$InventoryPath,[string]$PlanPath,[string]$ApprovalPath,[string]$RunPath,[string]$WorkspacePath,[string]$ApplyResultPath,[string]$PowerShellPath,
     [string]$OutputPath,[string]$MarkdownPath,[string]$VerifyOutputPath,[string]$SummaryPath,[switch]$WhatIf
 )
@@ -16,23 +16,25 @@ PowerShell 7 is searched without changing PATH. You can configure runtime.powers
 }
 $modulePath=Join-Path $PSScriptRoot '../src/WinPkgAgent/WinPkgAgent.psd1'
 . (Join-Path $PSScriptRoot 'Private/ExitCode.ps1')
+. (Join-Path $PSScriptRoot 'Private/Preview.ps1')
 try {
     Import-Module $modulePath -Force
     $result=switch($Command){
         environment { Test-WpaEnvironment -PowerShellPath $PowerShellPath -PolicyPath $PolicyPath }
-        inventory { Get-WpaInventory -OutputPath $OutputPath -WhatIf:$WhatIf }
+        inventory { Get-WpaInventory -PolicyPath $PolicyPath -OutputPath $OutputPath -WhatIf:$WhatIf }
         manifest { Test-WpaManifest -Path $Path }
         plan { New-WpaPlan -ManifestPath $ManifestPath -PolicyPath $PolicyPath -InventoryPath $InventoryPath -OutputPath $OutputPath -MarkdownPath $MarkdownPath -WhatIf:$WhatIf }
         show { Show-WpaPlan -PlanPath $PlanPath }
         approve { Approve-WpaPlan -PlanPath $PlanPath -OutputPath $OutputPath -WhatIf:$WhatIf }
         'validate-plan' { Test-WpaPlan -PlanPath $PlanPath -ApprovalPath $ApprovalPath }
         invoke { if(-not $OutputPath){$OutputPath='./artifacts/apply-result.json'};if(-not $VerifyOutputPath){$VerifyOutputPath='./artifacts/verify-result.json'};if(-not $SummaryPath){$SummaryPath='./artifacts/run-summary.md'};if($WhatIf){Invoke-WpaPlan -PlanPath $PlanPath -PolicyPath $PolicyPath -Preflight -OutputPath $OutputPath -VerifyOutputPath $VerifyOutputPath -SummaryPath $SummaryPath -Confirm:$false}else{Invoke-WpaPlan -PlanPath $PlanPath -ApprovalPath $ApprovalPath -PolicyPath $PolicyPath -OutputPath $OutputPath -VerifyOutputPath $VerifyOutputPath -SummaryPath $SummaryPath -Confirm:$false} }
+        preview { Invoke-WpaCliPreview -ManifestPath $ManifestPath -PolicyPath $PolicyPath -WorkspacePath $WorkspacePath -WhatIf:$WhatIf }
         'new-run' { New-WpaRun -ManifestPath $ManifestPath -PolicyPath $PolicyPath -WorkspacePath $WorkspacePath -WhatIf:$WhatIf }
         'get-run' { Get-WpaRun -RunPath $RunPath }
         'show-run' { Show-WpaRun -RunPath $RunPath }
         'approve-run' { Approve-WpaRun -RunPath $RunPath -WhatIf:$WhatIf }
         'invoke-run' { Invoke-WpaRun -RunPath $RunPath -WhatIf:$WhatIf -DiagnosticLogging:$false }
-        'resume-verify' { Resume-WpaVerification -PlanPath $PlanPath -ApplyResultPath $ApplyResultPath -VerifyOutputPath $VerifyOutputPath -WhatIf:$WhatIf }
+        'resume-verify' { Resume-WpaVerification -PlanPath $PlanPath -ApplyResultPath $ApplyResultPath -PolicyPath $PolicyPath -VerifyOutputPath $VerifyOutputPath -WhatIf:$WhatIf }
         'initialize' { Initialize-WpaProject -Path $(if($Path){$Path}else{'.'}) -Force:$false -WhatIf:$WhatIf }
         'export-candidate' { Export-WpaManifestCandidate -InventoryPath $InventoryPath -OutputPath $OutputPath -WhatIf:$WhatIf }
         'unmanaged-candidate' { Export-WpaUnmanagedCandidate -InventoryPath $InventoryPath -OutputPath $OutputPath -WhatIf:$WhatIf }

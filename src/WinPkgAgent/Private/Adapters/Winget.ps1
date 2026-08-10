@@ -1,11 +1,11 @@
-function Test-WpaWingetAvailable { param([string]$Executable='winget'); $null -ne (Resolve-WpaManagerExecutable -Manager winget) }
+function Test-WpaWingetAvailable { $null -ne (Resolve-WpaManagerExecutable -Manager winget) }
 function ConvertFrom-WpaWingetExport {
     param([Parameter(Mandatory)][string]$Json)
     try { $data = $Json | ConvertFrom-Json -ErrorAction Stop } catch { return $null }
     $sourcesProperty = $data.PSObject.Properties['Sources']
     if ($null -eq $sourcesProperty) { return $null }
     $packages = @($sourcesProperty.Value | ForEach-Object { Get-WpaPropertyValue $_ 'Packages' @() })
-    if ($packages.Count -eq 0) { Write-Output -NoEnumerate ([object[]]@()); return }
+    if ($packages.Count -eq 0) { Write-Output -InputObject ([object[]]@()) -NoEnumerate; return }
     $result = foreach($p in $packages) {
         if ([string]::IsNullOrWhiteSpace($p.PackageIdentifier)) { return $null }
         $version=Get-WpaPropertyValue $p 'Version';$source=Get-WpaPropertyValue $p 'Source'
@@ -27,23 +27,20 @@ function ConvertFrom-WpaWingetList {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
     $lines = @($Text -split "`r?`n")
     $headerIndex = -1
-    $starts = $null
     foreach ($labels in @(
         @('Name','Id','Version','Available','Source'),
-        @('名前','ID','バージョン','利用可能','ソース')
+        @("`u{540D}`u{524D}",'ID',"`u{30D0}`u{30FC}`u{30B8}`u{30E7}`u{30F3}","`u{5229}`u{7528}`u{53EF}`u{80FD}","`u{30BD}`u{30FC}`u{30B9}")
     )) {
         for ($index = 0; $index -lt $lines.Count; $index++) {
             $line = $lines[$index]
-            $candidateStarts = @()
             $cursor = 0
             $matched = $true
             foreach ($label in $labels) {
                 $position = $line.IndexOf($label, $cursor, [StringComparison]::Ordinal)
                 if ($position -lt 0) { $matched = $false; break }
-                $candidateStarts += $position
                 $cursor = $position + $label.Length
             }
-            if ($matched) { $headerIndex = $index; $starts = $candidateStarts; break }
+            if ($matched) { $headerIndex = $index; break }
         }
         if ($headerIndex -ge 0) { break }
     }
@@ -84,7 +81,7 @@ function ConvertFrom-WpaWingetList {
     }
     @($rows)
 }
-function Get-WpaWingetUnmanagedObservations {
+function Get-WpaWingetUnmanagedObservation {
     [CmdletBinding()]
     param([string[]]$KnownIds = @(), [int]$TimeoutSeconds = 30)
     $executable = Resolve-WpaManagerExecutable -Manager winget
@@ -142,7 +139,7 @@ function Get-WpaWingetInventory {
     $u=Invoke-WpaProcess -FilePath $Executable -Arguments @('upgrade','--disable-interactivity') -TimeoutSeconds $TimeoutSeconds; $updates=if($u.ExitCode -eq 0){ConvertFrom-WpaWingetUpgrade $u.StdOut}else{$null}; if($packages -and $null -ne $updates -and $updates.Valid){foreach($p in $packages){$m=$updates.Items|Where-Object Id -eq $p.Id|Select-Object -First 1;if($m){$p|Add-Member NoteProperty AvailableVersion $m.AvailableVersion -Force}}}
     if($null -eq $packages -and -not $r.TimedOut){ $packages = ConvertFrom-WpaWingetFallback $r.StdOut }
     $status=if($null -eq $packages){'failed'}elseif($null -eq $updates -or $null -eq $managerVersion){'partial'}else{'success'}
-    [pscustomobject]@{ manager='winget'; version=$managerVersion; status=$status; timedOut=($r.TimedOut -or $u.TimedOut -or $v.TimedOut); Packages=@($packages | Where-Object {$null -ne $_} | ForEach-Object {[pscustomobject]@{manager='winget';id=$_.Id;displayName=$_.Id;installedVersion=$_.Version;availableVersion=(Get-WpaPropertyValue $_ 'AvailableVersion');source=$_.Source;scope=$null;metadata=@{detectedBy='winget-export'}}}); warning=if($null -eq $packages){'winget inventory unavailable or malformed'}elseif($null -eq $updates -or $null -eq $managerVersion){'winget version or update output unavailable or unrecognized'}else{$null}; Available=(Test-WpaWingetAvailable $Executable); Success=($null -ne $packages); Raw=$r }
+    [pscustomobject]@{ manager='winget'; version=$managerVersion; status=$status; timedOut=($r.TimedOut -or $u.TimedOut -or $v.TimedOut); Packages=@($packages | Where-Object {$null -ne $_} | ForEach-Object {[pscustomobject]@{manager='winget';id=$_.Id;displayName=$_.Id;installedVersion=$_.Version;availableVersion=(Get-WpaPropertyValue $_ 'AvailableVersion');source=$_.Source;scope=$null;metadata=@{detectedBy='winget-export'}}}); warning=if($null -eq $packages){'winget inventory unavailable or malformed'}elseif($null -eq $updates -or $null -eq $managerVersion){'winget version or update output unavailable or unrecognized'}else{$null}; Available=(Test-WpaWingetAvailable); Success=($null -ne $packages); Raw=$r }
 }
 function Install-WpaWingetPackage { [CmdletBinding(SupportsShouldProcess)]param([string]$Id,[string]$Version,[string]$Source,[int]$TimeoutSeconds=30); if($Id -notmatch '^[A-Za-z0-9_.-]+$'){throw 'invalid id'}; $Executable=Resolve-WpaManagerExecutable -Manager winget; if(-not $Executable){throw 'winget executable unavailable'}; $a=@('install','--id',$Id,'--exact','--disable-interactivity','--accept-source-agreements','--accept-package-agreements'); if($Version){$a+=@('--version',$Version)}; if($Source){$a+=@('--source',$Source)}; if($PSCmdlet.ShouldProcess("winget/$Id",'install')){Invoke-WpaProcess -FilePath $Executable -Arguments $a -TimeoutSeconds $TimeoutSeconds} }
 function Update-WpaWingetPackage { [CmdletBinding(SupportsShouldProcess)]param([string]$Id,[string]$Version,[string]$Source,[int]$TimeoutSeconds=30); $Executable=Resolve-WpaManagerExecutable -Manager winget; if(-not $Executable){throw 'winget executable unavailable'}; $a=@('upgrade','--id',$Id,'--exact','--disable-interactivity','--accept-source-agreements','--accept-package-agreements'); if($Version){$a+=@('--version',$Version)}; if($Source){$a+=@('--source',$Source)}; if($PSCmdlet.ShouldProcess("winget/$Id",'upgrade')){Invoke-WpaProcess -FilePath $Executable -Arguments $a -TimeoutSeconds $TimeoutSeconds} }

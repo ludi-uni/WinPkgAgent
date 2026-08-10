@@ -27,13 +27,17 @@ function Get-WpaPlanEvaluation {
 
     foreach ($package in @($Manifest.packages)) {
         $key = "$($package.manager)`0$($package.id)"; $null = $declared.Add($key)
+        if ($package.manager -notin @($Policy.allowedManagers)) {
+            $actions.Add((ConvertTo-WpaAction $package blocked $null MANAGER_NOT_ALLOWED 'The package manager is not allowed by policy.' high)); continue
+        }
+        $managerScope = @(Get-WpaPropertyValue $Inventory 'managerScope' @())
+        if ($managerScope.Count -gt 0 -and $package.manager -notin $managerScope) {
+            $actions.Add((ConvertTo-WpaAction $package blocked $null MANAGER_UNAVAILABLE 'The declared package manager is outside the inventory scope.' high)); continue
+        }
         $managerState = @($Inventory.managers | Where-Object { (Get-WpaPropertyValue $_ 'manager' (Get-WpaPropertyValue $_ 'Name')) -eq $package.manager }) | Select-Object -First 1
         $managerStatus = Get-WpaPropertyValue $managerState 'status' $(if (Get-WpaPropertyValue $managerState 'Success' $false) { 'success' } else { 'failed' })
         if ($null -eq $managerState -or $managerStatus -ne 'success') {
             $actions.Add((ConvertTo-WpaAction $package blocked $null MANAGER_UNAVAILABLE 'The declared package manager inventory is unavailable.' high)); continue
-        }
-        if ($package.manager -notin @($Policy.allowedManagers)) {
-            $actions.Add((ConvertTo-WpaAction $package blocked $null MANAGER_NOT_ALLOWED 'The package manager is not allowed by policy.' high)); continue
         }
         $packageSource=Get-WpaPropertyValue $package 'source'
         if ($packageSource -and $packageSource -notin @($Policy.allowedSources)) {

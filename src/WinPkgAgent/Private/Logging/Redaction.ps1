@@ -16,7 +16,7 @@ function Protect-WpaSensitiveText {
     return $result
 }
 
-function Get-WpaOutputMetadata {
+function Get-WpaOutputDigest {
     [CmdletBinding()]
     param([AllowNull()][string]$Text)
     $value = if($null -eq $Text){''}else{$Text}

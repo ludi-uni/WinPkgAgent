@@ -11,7 +11,14 @@ function Read-WpaTextFile {
     if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Reparse-point input files are not accepted.' }
     $cursor=Split-Path $resolved -Parent
     while($cursor){$ancestor=Get-Item -LiteralPath $cursor -Force;if(($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Inputs beneath reparse-point directories are not accepted.'};$next=Split-Path $cursor -Parent;if($next -eq $cursor){break};$cursor=$next}
-    return [IO.File]::ReadAllText($resolved, [Text.UTF8Encoding]::new($false, $true))
+    $bytes = [IO.File]::ReadAllBytes($resolved)
+    if ($bytes.Length -gt $MaxBytes) { throw 'Input file is not a regular file within the size limit.' }
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { throw 'INPUT_UTF8_INVALID' }
+    try {
+        return [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
+    } catch [Text.DecoderFallbackException] {
+        throw 'INPUT_UTF8_INVALID'
+    }
 }
 
 function Read-WpaJsonFile {
@@ -21,14 +28,19 @@ function Read-WpaJsonFile {
     try { return $text | ConvertFrom-Json -Depth 100 } catch { throw "Invalid JSON file: $($_.Exception.Message)" }
 }
 
-function Read-WpaYamlFile {
+function ConvertFrom-WpaYamlText {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Path)
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
     $yamlModule = Get-Module -ListAvailable -Name powershell-yaml | Where-Object Version -GE ([version]'0.4.12') | Select-Object -First 1
     if (-not $yamlModule) { throw 'powershell-yaml 0.4.12 or newer is required. Install it explicitly after reviewing the dependency documentation.' }
     Import-Module $yamlModule.Path -ErrorAction Stop
-    $text = Read-WpaTextFile -Path $Path
-    try { return ConvertFrom-Yaml -Yaml $text -Ordered } catch { throw "Invalid YAML file: $($_.Exception.Message)" }
+    try { return ConvertFrom-Yaml -Yaml $Text -Ordered } catch { throw "Invalid YAML file: $($_.Exception.Message)" }
+}
+
+function Read-WpaYamlFile {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    return ConvertFrom-WpaYamlText -Text (Read-WpaTextFile -Path $Path)
 }
 
 function Test-WpaIso8601Timestamp {
@@ -57,7 +69,7 @@ function Test-WpaIso8601Timestamp {
     }
 }
 
-function Test-WpaJsonTimestampElements {
+function Test-WpaJsonTimestampElement {
     [CmdletBinding()]
     param([Parameter(Mandatory)][System.Text.Json.JsonElement]$Element)
     switch ($Element.ValueKind) {
@@ -68,21 +80,21 @@ function Test-WpaJsonTimestampElements {
                         Test-WpaIso8601Timestamp -Value $property.Value.GetString() -FieldName $property.Name
                     }
                 } else {
-                    Test-WpaJsonTimestampElements -Element $property.Value
+                    Test-WpaJsonTimestampElement -Element $property.Value
                 }
             }
         }
         Array {
-            foreach ($item in $Element.EnumerateArray()) { Test-WpaJsonTimestampElements -Element $item }
+            foreach ($item in $Element.EnumerateArray()) { Test-WpaJsonTimestampElement -Element $item }
         }
     }
 }
 
-function Test-WpaSchemaTimestamps {
+function Test-WpaSchemaTimestamp {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Json)
     $document = [System.Text.Json.JsonDocument]::Parse($Json)
-    try { Test-WpaJsonTimestampElements -Element $document.RootElement } finally { $document.Dispose() }
+    try { Test-WpaJsonTimestampElement -Element $document.RootElement } finally { $document.Dispose() }
 }
 
 function Test-WpaDataSchema {
@@ -98,7 +110,7 @@ function Test-WpaDataSchema {
     if (-not (Test-Json -Json $json -SchemaFile $schemaPath -ErrorVariable errors)) {
         throw "Data does not match $SchemaName schema: $($errors -join '; ')"
     }
-    Test-WpaSchemaTimestamps -Json $json
+    Test-WpaSchemaTimestamp -Json $json
     return $true
 }
 

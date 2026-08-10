@@ -52,6 +52,62 @@ Describe 'repository JSON Schema contracts' {
         $policyValid = try { Test-Json -Path $path -SchemaFile (Join-Path $schemaRoot 'policy.schema.json') -ErrorAction Stop } catch { $false }
         $policyValid | Should -BeFalse
     }
+
+    It 'accepts the schema v2 sample inventory with policy provenance' {
+        $samplePath = Join-Path $repo 'examples/inventory.sample.json'
+        $valid = Test-Json -Path $samplePath -SchemaFile (Join-Path $schemaRoot 'inventory.schema.json')
+        $valid | Should -BeTrue
+    }
+
+    It 'rejects inventory artifacts without policy provenance' {
+        $inventory = Get-Content (Join-Path $repo 'examples/inventory.sample.json') -Raw | ConvertFrom-Json
+        $inventory.PSObject.Properties.Remove('policyHash')
+        $path = Join-Path $TestDrive 'missing-inventory-policy.json'
+        $inventory | ConvertTo-Json -Depth 10 | Set-Content $path
+        (Test-Json -Path $path -SchemaFile (Join-Path $schemaRoot 'inventory.schema.json') -ErrorAction SilentlyContinue) | Should -BeFalse
+    }
+
+    It 'rejects an empty allowed manager scope' {
+        $policy = [ordered]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch');allowedManagers=@();allowedSources=@('main');protectedPackages=@();dangerousCategories=@('driver','bios','uefi','firmware');allowUninstall=$false;requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=60;rebootHandling='record-only';unknownVersionHandling='block'}
+        $path = Join-Path $TestDrive 'empty-manager-scope.json'
+        $policy | ConvertTo-Json | Set-Content $path
+        $policyValid = try { Test-Json -Path $path -SchemaFile (Join-Path $schemaRoot 'policy.schema.json') -ErrorAction Stop } catch { $false }
+        $policyValid | Should -BeFalse
+
+        InModuleScope WinPkgAgent -Parameters @{ Policy=$policy } {
+            param($Policy)
+            { Test-WpaPolicyObject -Policy ([pscustomobject]$Policy) } | Should -Throw '*manager*'
+        }
+    }
+
+    It 'rejects a policy with no allowedManagers property' {
+        InModuleScope WinPkgAgent {
+            $policy = [pscustomobject]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch');allowedSources=@('main');protectedPackages=@();dangerousCategories=@('driver','bios','uefi','firmware');allowUninstall=$false;requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=60;rebootHandling='record-only';unknownVersionHandling='block'}
+            { Test-WpaPolicyObject -Policy $policy } | Should -Throw '*manager*'
+        }
+    }
+
+    It 'rejects a policy with a null allowedManagers property' {
+        InModuleScope WinPkgAgent {
+            $policy = [pscustomobject]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch');allowedManagers=$null;allowedSources=@('main');protectedPackages=@();dangerousCategories=@('driver','bios','uefi','firmware');allowUninstall=$false;requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=60;rebootHandling='record-only';unknownVersionHandling='block'}
+            { Test-WpaPolicyObject -Policy $policy } | Should -Throw '*manager*'
+        }
+    }
+
+    It 'rejects an ordered-dictionary policy with no allowedManagers key' {
+        InModuleScope WinPkgAgent {
+            $policy = [ordered]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch');allowedManagers=@('scoop');allowedSources=@('main');protectedPackages=@();dangerousCategories=@('driver','bios','uefi','firmware');allowUninstall=$false;requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=60;rebootHandling='record-only';unknownVersionHandling='block'}
+            $policy.Remove('allowedManagers')
+            { Test-WpaPolicyObject -Policy $policy } | Should -Throw '*manager*'
+        }
+    }
+
+    It 'rejects an ordered-dictionary policy with a null allowedManagers value' {
+        InModuleScope WinPkgAgent {
+            $policy = [ordered]@{schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch');allowedManagers=$null;allowedSources=@('main');protectedPackages=@();dangerousCategories=@('driver','bios','uefi','firmware');allowUninstall=$false;requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=60;rebootHandling='record-only';unknownVersionHandling='block'}
+            { Test-WpaPolicyObject -Policy $policy } | Should -Throw '*manager*'
+        }
+    }
 }
 
 Describe 'manifest semantic validation contract' {
@@ -111,6 +167,26 @@ Describe 'manifest semantic validation contract' {
         InModuleScope WinPkgAgent -Parameters @{ InputPath=$path } { param($InputPath); { Read-WpaTextFile -Path $InputPath -MaxBytes 8 } | Should -Throw }
     }
 
+    It 'rejects a UTF-8 BOM with a stable sanitized error' {
+        $path = Join-Path $TestDrive 'bom.yaml'
+        [IO.File]::WriteAllBytes($path, [byte[]](0xEF,0xBB,0xBF,0x61))
+
+        InModuleScope WinPkgAgent -Parameters @{ InputPath=$path } {
+            param($InputPath)
+            { Read-WpaTextFile -Path $InputPath } | Should -Throw 'INPUT_UTF8_INVALID'
+        }
+    }
+
+    It 'rejects invalid UTF-8 with the same stable sanitized error' {
+        $path = Join-Path $TestDrive 'invalid-utf8.yaml'
+        [IO.File]::WriteAllBytes($path, [byte[]](0xC3,0x28))
+
+        InModuleScope WinPkgAgent -Parameters @{ InputPath=$path } {
+            param($InputPath)
+            { Read-WpaTextFile -Path $InputPath } | Should -Throw 'INPUT_UTF8_INVALID'
+        }
+    }
+
     It 'rejects unknown policy values' {
         InModuleScope WinPkgAgent {
             $policy = [pscustomobject]@{ schemaVersion = 1; allowUninstall = $false; requireApproval = $true; unknownVersionHandling = 'allow'; rejectStateChanges = $true; rebootHandling = 'record-only'; maxOperations = 10; operationTimeoutSeconds = 60 }
@@ -141,6 +217,19 @@ Describe 'manifest semantic validation contract' {
         InModuleScope WinPkgAgent {
             $policy = [pscustomobject]@{ schemaVersion=1;allowInstall=$true;allowUpgrade=@('patch','major');allowUninstall=$false;allowedManagers=@('winget');allowedSources=@('winget');protectedPackages=@();dangerousCategories=@();requireApproval=$true;approvalValidityMinutes=30;rejectStateChanges=$true;maxOperations=10;operationTimeoutSeconds=60;rebootHandling='record-only';unknownVersionHandling='block' }
             { Test-WpaPolicyObject -Policy $policy } | Should -Throw
+        }
+    }
+
+    It 'validates the explicit manager policy samples through the policy reader' {
+        $configRoot = Join-Path ((Resolve-Path (Join-Path $PSScriptRoot '../..')).Path) 'config'
+        InModuleScope WinPkgAgent -Parameters @{ ConfigRoot=$configRoot } {
+            param($ConfigRoot)
+            $codex = Read-WpaPolicyFile -Path (Join-Path $ConfigRoot 'policy.codex.yaml')
+            @($codex.allowedManagers) | Should -BeExactly @('scoop')
+            @($codex.allowedSources) | Should -BeExactly @('main','extras','versions')
+            $desktop = Read-WpaPolicyFile -Path (Join-Path $ConfigRoot 'policy.desktop.yaml')
+            @($desktop.allowedManagers) | Should -BeExactly @('winget','scoop')
+            @($desktop.allowedSources) | Should -BeExactly @('winget','main','extras','versions')
         }
     }
 }
